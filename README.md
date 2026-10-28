@@ -55,7 +55,7 @@ Trustoken（trustoken.cn）是 AiPy 的官方 token 分发商，`api.trustoken.c
 ## 签到 / 每日任务
 
 - **签到**：每天北京时间 08:00–22:00，`POST /api/user/checkin`，基准 100 灵石；连续签到按阶梯加赠。magpie 每账号每天调一次 `auth.checkin`，失败当天会重试。
-- **每日任务**：`daily_ai_1`（完成 1 次 AI 任务，50 灵石）、`daily_ai_5`（完成 5 次，150 灵石）。插件会领取已可领取的奖励。
+- **每日任务**：`daily_ai_1`（完成 1 次 AI 任务，50 灵石）、`daily_ai_5`（完成 5 次，150 灵石）。插件会领取已可领取的奖励；窗口外也会先领任务奖励，再把签到留给当天重试。
 - **⚠ 一个实测限制**：`daily_ai_*` 的 progress 只由 **AiPy 客户端里真正完成的任务**推进；直接调 `/chat/completions`（带不带 `Aipy-Task-ID` 都一样）不会改变进度。插件仍会用最低价 `qwen3.8-flash` 发 gap 次极小请求（best effort），并把服务端真实进度写进签到消息 —— **不谎报完成**。
 
 ---
