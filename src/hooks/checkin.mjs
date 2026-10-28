@@ -16,6 +16,7 @@ import { randomBytes } from "node:crypto"
 import { checkinStatus, doCheckin, dailyTaskStatus, claimDailyTask, chatOnce } from "../api.mjs"
 import { QUOTA_PER_STONE, CHECKIN_WINDOW } from "../context.mjs"
 import { CHEAPEST_MODEL } from "../rates.mjs"
+import { rollInvite } from "../invite.mjs"
 
 const stones = (quota) => Number(quota || 0) / QUOTA_PER_STONE
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -144,6 +145,10 @@ export function makeCheckin(c) {
           }
         }
       }
+
+      // 每天顺带滚一次邀请码（学超级麦吉：签到是每天必跑的那个钩子）
+      const ownInvite = await rollInvite(auth)
+      if (ownInvite) parts.push(`邀请码 ${ownInvite}`)
 
       return {
         outcome: claimed ? "claimed" : windowOpen ? "done" : "failed",

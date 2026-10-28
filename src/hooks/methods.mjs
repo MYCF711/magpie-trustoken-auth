@@ -6,7 +6,17 @@
 //
 // 铁律：authorize() 立刻返回，网络请求放在 callback()。
 
-import { sendSmsCode, loginMobile, fetchSelf, ensureApiKey, fetchV1Models } from "../api.mjs"
+import { sendSmsCode, loginMobile, registerMobile, fetchSelf, ensureApiKey, fetchV1Models } from "../api.mjs"
+import {
+  inviteToUse,
+  inviteChoices,
+  rollInvite,
+  writeInvitePolicy,
+  readAccountCodes,
+  authorInvite,
+  inviteTag,
+  describePolicy,
+} from "../invite.mjs"
 
 function maskPhone(p) {
   return String(p || "").replace(/^(\d{3})\d{4}(\d{4})$/, "$1****$2")
@@ -26,6 +36,9 @@ async function completeSignIn(c, data) {
   const apiKey = await ensureApiKey(access, uid)
   const expiresIn = Number(data?.expires_in ?? 2_592_000)
 
+  // 登录成功 → 把这个账号自己的邀请码滚上去（失败不影响登录）
+  await rollInvite({ accountToken: access, uid, accountId: maskPhone(phone) || String(uid ?? "") })
+
   return {
     type: "success",
     access: apiKey,
@@ -40,7 +53,7 @@ async function completeSignIn(c, data) {
   }
 }
 
-export function makeMethods(c) {
+export function makeMethods(c, getLock = () => true) {
   return [
     // ── ① 手机号验证码 ──────────────────────────────────────────────
     {
@@ -59,18 +72,29 @@ export function makeMethods(c) {
       async authorize(inputs) {
         const phone = String(inputs?.phone || "").replace(/[\s-]/g, "")
         if (!/^1\d{10}$/.test(phone)) throw new Error("手机号不完整")
+        const inviteCode = inviteToUse(getLock())
 
         // 发码放在 callback 里（authorize 必须立刻返回）
         return {
           url: `${c.WEB}/login`,
           opened: true,
           method: "code",
-          instructions: `点「继续」后会把验证码发到 ${maskPhone(phone)}（可能要先过一次图形验证）。`,
+          instructions: `点「继续」后会把验证码发到 ${maskPhone(phone)}（可能要先过一次图形验证）。邀请上级：${inviteCode ? inviteCode : "无"}。`,
           async callback(code) {
             const c0 = String(code || "").replace(/\D/g, "")
             if (c0.length < 4) return { type: "failed", error: "验证码是 4~8 位数字" }
             try {
-              const body = await loginMobile(phone, c0)
+              let body
+              try {
+                body = await loginMobile(phone, c0, inviteCode)
+              } catch (e) {
+                // 未注册 → 走注册（注册才接受 aff_code）
+                if (/不存在|未注册|未找到|not found|33002|1001/i.test(String(e?.message ?? e))) {
+                  body = await registerMobile(phone, c0, inviteCode)
+                } else {
+                  throw e
+                }
+              }
               return await completeSignIn(c, body?.data ?? body)
             } catch (e) {
               return { type: "failed", error: String(e?.message ?? e).slice(0, 500) }
@@ -140,6 +164,60 @@ export function makeMethods(c) {
             }
           },
         }
+      },
+    },
+
+    // ── ④ 邀请上级（只存策略，不登录、不新增账号） ─────────────────
+    {
+      type: "api",
+      keyless: true,
+      label: `${c.PROVIDER_NAME} 邀请上级${inviteTag(getLock)}`,
+      prompts: [
+        {
+          type: "select",
+          key: "invite",
+          message: "新号挂在谁的邀请码下？（决定拉新奖励进哪个账号）",
+          options: inviteChoices(getLock),
+        },
+      ],
+      async authorize(inputs) {
+        const pick = String(inputs?.invite || "")
+        if (!pick) return { type: "failed", error: "没有选择 —— 保持当前设置" }
+        if (pick === "__author__") {
+          writeInvitePolicy({ mode: "fixed", code: authorInvite(), accountId: "MYCF711" })
+        } else if (pick === "__auto__") {
+          writeInvitePolicy({ mode: "auto" })
+        } else {
+          const codes = readAccountCodes()
+          const key = Object.keys(codes).find((k) => codes[k]?.code === pick) || ""
+          writeInvitePolicy({ mode: "fixed", code: pick, accountId: codes[key]?.accountId || key })
+        }
+        return { type: "failed", error: `已保存：新号默认挂在 ${describePolicy(undefined, getLock())}` }
+      },
+    },
+
+    // ── ⑤ 邀请上级：自定义码 ─────────────────────────────────────
+    {
+      type: "api",
+      keyless: true,
+      label: `${c.PROVIDER_NAME} 邀请上级：自定义码`,
+      prompts: [
+        {
+          type: "text",
+          key: "inviteCode",
+          message: "邀请码（2–16 位字母数字；留空 = 保持当前）",
+          placeholder: "例如 Chdr",
+          validate: (v) => {
+            const s = String(v || "").trim()
+            return !s || /^[A-Za-z0-9]{2,16}$/.test(s) ? undefined : "邀请码是 2–16 位字母数字"
+          },
+        },
+      ],
+      async authorize(inputs) {
+        const code = String(inputs?.inviteCode || "").trim()
+        if (!code) return { type: "failed", error: "没有填码 —— 保持当前设置" }
+        writeInvitePolicy({ mode: "custom", code })
+        return { type: "failed", error: `已保存：新号默认挂在 ${describePolicy(undefined, getLock())}` }
       },
     },
   ]
