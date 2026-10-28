@@ -744,6 +744,18 @@ export async function waitForLogin(session, { timeout = 300_000, interval = 1500
   let last = null
   while (Date.now() < deadline) {
     try {
+      // 先看有没有滑块弹窗：有就自动解掉（和用户手拖完全同一套页面事件）
+      const sol = await solveSlider(session)
+      if (sol) {
+        const sig = String(sol.sig || "")
+        if (session.__lastCaptchaSig !== sig) {
+          session.__lastCaptchaSig = sig
+          try { await dragSlider(session, sol) } catch {}
+          await new Promise((r) => setTimeout(r, 1200))
+          continue
+        }
+      }
+
       await evalInPage(session, LOGIN_HOOK)
       const raw = await evalInPage(session, READ_LOGIN_STATE)
       if (raw) {
@@ -767,4 +779,104 @@ export async function waitForLogin(session, { timeout = 300_000, interval = 1500
     await new Promise((r) => setTimeout(r, interval))
   }
   return { token: null, last }
+}
+
+// ── 自动解滑块 ───────────────────────────────────────────────────────
+// 页面里用 canvas 读背景图/拼图块，按 alpha 蒙版找最暗的凹槽位置；
+// 再用 CDP Input 事件把滑块从起点拖到目标。完全不调用 /api/captcha/check，
+// 让页面自己的 React 组件去提交，逻辑与用户手拖完全一致。
+
+const SOLVE_SLIDER = `(() => {
+  const bgImg = [...document.images].find(i => i.src.startsWith("data:image/jpeg") && i.getBoundingClientRect().width > 250);
+  const tileImg = [...document.images].find(i => i.src.startsWith("data:image/png") && i.getBoundingClientRect().width < 100);
+  const handle = document.querySelector(".gocaptcha-module_dragBlock__bFlwx");
+  const track = document.querySelector(".gocaptcha-module_dragSlideBar__noauW");
+  if (!bgImg || !tileImg || !handle || !track) return "";
+  const br = bgImg.getBoundingClientRect();
+  const tr = tileImg.getBoundingClientRect();
+  const hr = handle.getBoundingClientRect();
+  const trk = track.getBoundingClientRect();
+  const bw = Math.round(br.width), bh = Math.round(br.height), tw = Math.round(tr.width), th = Math.round(tr.height);
+  if (!bw || !tw) return "";
+  const bc = document.createElement("canvas"); bc.width = bw; bc.height = bh;
+  const bctx = bc.getContext("2d"); bctx.drawImage(bgImg, 0, 0, bw, bh);
+  const bd = bctx.getImageData(0, 0, bw, bh).data;
+  const tc = document.createElement("canvas"); tc.width = tw; tc.height = th;
+  const tctx = tc.getContext("2d"); tctx.drawImage(tileImg, 0, 0, tw, th);
+  const td = tctx.getImageData(0, 0, tw, th).data;
+  const ty = Math.round(tr.top - br.top);
+  let best = null;
+  for (let x = 0; x <= bw - tw; x++) {
+    let sum = 0, n = 0;
+    for (let yy = 0; yy < th; yy += 2) {
+      for (let xx = 0; xx < tw; xx += 2) {
+        const a = td[((yy * tw + xx) * 4) + 3];
+        if (a > 128) {
+          const idx = (((ty + yy) * bw) + (x + xx)) * 4;
+          sum += 0.299 * bd[idx] + 0.587 * bd[idx + 1] + 0.114 * bd[idx + 2];
+          n++;
+        }
+      }
+    }
+    if (!n) continue;
+    const mean = sum / n;
+    if (!best || mean < best.mean) best = { mean, x };
+  }
+  if (!best) return "";
+  const A = bw, P = Math.round(hr.width), M = Math.round(tr.left - br.left), W = tw;
+  const q = A - P;
+  const ie = q > 0 ? (A - (W + M)) / q : 1;
+  if (!ie || !Number.isFinite(ie)) return "";
+  const targetHandleLeft = trk.left + ((best.x - M) / ie);
+  return JSON.stringify({
+    sig: (bgImg.src || "").slice(30, 90) + "|" + (tileImg.src || "").slice(30, 90),
+    target: best.x,
+    mean: best.mean,
+    fromX: hr.left + hr.width / 2,
+    fromY: hr.top + hr.height / 2,
+    toX: targetHandleLeft + hr.width / 2,
+    toY: hr.top + hr.height / 2,
+  });
+})()`
+
+/** 通过 CDP 发一个 Input 事件 */
+async function cdpInput(session, params) {
+  const page = await pickLoginPage(session.port, "trustoken.cn")
+  if (!page) throw new Error("没有可用的页面 target")
+  const ws = new WebSocket(page.webSocketDebuggerUrl)
+  await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("CDP 连接超时")), 5000)
+    ws.addEventListener("open", () => { clearTimeout(t); resolve() })
+    ws.addEventListener("error", (e) => { clearTimeout(t); reject(new Error("CDP 连接失败")); })
+  })
+  try {
+    await new Promise((resolve, reject) => {
+      const t = setTimeout(() => reject(new Error("CDP Input 超时")), 5000)
+      ws.addEventListener("message", (ev) => {
+        let msg; try { msg = JSON.parse(ev.data) } catch { return }
+        if (msg.id !== 2) return
+        clearTimeout(t); msg.error ? reject(new Error(msg.error.message || "CDP error")) : resolve()
+      })
+      ws.send(JSON.stringify({ id: 2, method: "Input.dispatchMouseEvent", params }))
+    })
+  } finally { try { ws.close() } catch {} }
+}
+
+/** 自动解掉当前屏幕上的滑块；没有滑块返回 null */
+export async function solveSlider(session) {
+  let raw = ""
+  try { raw = await evalInPage(session, SOLVE_SLIDER) } catch { return null }
+  if (!raw) return null
+  try { return JSON.parse(raw) } catch { return null }
+}
+
+/** 拖滑块 */
+export async function dragSlider(session, p) {
+  await cdpInput(session, { type: "mousePressed", x: p.fromX, y: p.fromY, button: "left", buttons: 1, clickCount: 1 })
+  const steps = 6
+  for (let i = 1; i <= steps; i++) {
+    const x = p.fromX + ((p.toX - p.fromX) * i) / steps
+    await cdpInput(session, { type: "mouseMoved", x, y: p.toY, button: "left", buttons: 1 })
+  }
+  await cdpInput(session, { type: "mouseReleased", x: p.toX, y: p.toY, button: "left", buttons: 0, clickCount: 1 })
 }
