@@ -63,19 +63,38 @@ used_quota 差值 = prompt_tokens × a + completion_tokens × b
   - 只有 `qwen3.8-flash` / `kimi/kimi-k3` 自己声明了 image 时保持原样。
 - 因此插件把 `capabilities.input.image` 写死：只有这两个模型为 `true`。
 
-## 5. 实测：每日任务口径
+## 5. 每日任务口径：任务 = 会话
 
 `daily_tasks/status` 的 `progress`：
 
 - 用普通 `/v1/chat/completions`（不带 Aipy 头）请求：progress 不变。
 - 带 `Aipy-Task-ID` + `Aipy-Task-Type: task` 的请求：progress 不变。
 - 用 `aipyapp` 的 Python API 跑一个真实 task：progress 不变。
-- 结论：trustoken 服务端只统计 **AiPy 客户端完成的任务**，纯 API 无法推进（至少 2026-10-29 是这样）。
+- **用 AiPy Pro 客户端创建任务（会话）：progress +1，实测 3 → 4 → 5。**
+
+结论：trustoken 的「AI 任务」= **AiPy Pro 的一个任务（会话）**，而且必须是 AiPy Pro 客户端自己创建/执行的任务（`aipyapp` 直接跑不算）。
+
+### AiPy 本机 API
+
+```
+POST http://127.0.0.1:<AiPy 端口>/api/aipy/createTask
+Authorization: Bearer <setting 表 api.key>
+Content-Type: application/json
+
+[{"force": true, "title": "每日任务 1", "instruction": "只回复 OK", "model": "qwen3.8-flash"}]
+```
+
+- `force: true` 必须带 —— 不带会复用最近那个空任务（实测三次调用返回同一个 task id，进度不涨）。
+- 一次调用创建一个新 task 记录并执行；每个任务在 20 秒内结算到 trustoken 的 `daily_ai_5`。
+- 端口是 AiPy 每次启动随机分配的：`netstat -ano -p tcp` + `tasklist /FI "IMAGENAME eq AiPyPro.exe"` 按 PID 匹配 127.0.0.1 的 LISTENING 端口。
+- `api.key` 在 `%APPDATA%\aipy-pro\aipy` 的 `setting` 表（`category='api', field='key'`）。
+- 实现在 `src/aipy-local.mjs`；独立脚本 `scripts/aipy-daily.mjs`。
 
 插件因此在 `auth.checkin` 里：
-1. 领取 `claimable` 的任务奖励（确定有效）；
-2. 用 `qwen3.8-flash` 为 `in_progress` 的 gap 发极小请求（best effort）；
-3. 把服务端返回的真实 `progress/target` 写进签到消息。
+1. 领取 `claimable` 的任务奖励；
+2. 用 `qwen3.8-flash` 通过 AiPy 本机 API 创建 gap 个任务（会话）；
+3. 等结算后再领一次；
+4. AiPy 没运行时降级为纯 API 补发（无效），并在 message 里如实说明。
 
 ## 6. 签到窗口
 
