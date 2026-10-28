@@ -120,11 +120,25 @@ export async function sendSmsCode(mobile) {
   return body
 }
 
-export async function loginMobile(phone_number, code) {
-  const body = await webPostSoft("/api/user/login/mobile", "", null, { phone_number, code })
+export async function loginMobile(phone_number, code, aff = "") {
+  const body = await webPostSoft("/api/user/login/mobile", "", null, { phone_number, code, aff })
   if (body.success === false) {
     throw new ApiError(body.message || "登录失败：验证码错误或已过期", {
       url: `${WEB}/api/user/login/mobile`,
+    })
+  }
+  return body
+}
+
+export async function registerMobile(phone_number, code, aff_code = "") {
+  const body = await webPostSoft("/api/user/register/mobile", "", null, {
+    phone_number,
+    code,
+    aff_code,
+  })
+  if (body.success === false) {
+    throw new ApiError(body.message || "注册失败：验证码错误或邀请码无效", {
+      url: `${WEB}/api/user/register/mobile`,
     })
   }
   return body

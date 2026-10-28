@@ -17,7 +17,8 @@
 |---|---|---|
 | POST | `/api/sms/code` | `{mobile}` 发短信验证码 |
 | POST | `/api/user/login/mobile` | `{phone_number, code}` → `{access_token, refresh_token, expires_in, user}` |
-| GET | `/api/user/self` | 额度、`task_count`、等级 |
+| POST | `/api/user/register/mobile` | `{phone_number, code, aff_code}` 注册（新号） |
+| GET | `/api/user/self` | 额度、`task_count`、等级、`aff_code`（自己的邀请码） |
 | GET | `/api/token/?p=0&size=100` | 令牌列表（含 `key`） |
 | POST | `/api/token/` | 新建令牌（`unlimited_quota: true`） |
 | GET | `/api/user/checkin/status` | 签到状态、`task_gate`、阶梯加赠 |
@@ -114,3 +115,15 @@ Content-Type: application/json
 - `max_tokens` 会被 trustoken 忽略/放大（请求 1 也输出上千 token）—— 对按输出预算调度的 agent 不友好。
 - 错误信息里会带「加入官方群」推广文案，不影响调用。
 - API Key 是明文存在本机 AiPy SQLite 里的；插件不复制它，用户直接粘贴即可。
+
+## 9. 邀请码
+
+- 自己的邀请码：`GET /api/user/self` 的 `aff_code`（当前账号实测 `Chdr`）。
+- 奖励口径（`GET /api/status`）：`quota_for_inviter = 5,000,000`（邀请人 1,000 灵石）、`quota_for_invitee = 2,500,000`（被邀请人 2,500 灵石）。
+- 注册接口：`POST /api/user/register/mobile`，body `{phone_number, code, aff_code}`。
+- 登录接口 `POST /api/user/login/mobile` 也接受 `aff` 字段，但只对「新号自动注册」生效；老号忽略。
+- 缓存（可整目录删）：
+  - `~/.cache/magpie/trustoken-invite.json` —— 下一次注册用的码（滚动）
+  - `~/.cache/magpie/trustoken-invite-policy.json` —— auto / fixed / custom
+  - `~/.cache/magpie/trustoken-invite-codes.json` —— 见过哪些账号的码
+- 学超级麦吉 0.3.32：登录成功 / 每日签到调用 `rollInvite`；「邀请上级」用两个只设置入口（select / text），`authorize` 返回 `{type:"failed", error:"已保存…"}`，不会新增账号。
