@@ -6,6 +6,7 @@
 //
 // 铁律：authorize() 立刻返回，网络请求放在 callback()。
 
+import { exec } from "node:child_process"
 import { sendSmsCode, loginMobile, registerMobile, fetchSelf, ensureApiKey, fetchV1Models } from "../api.mjs"
 import {
   inviteToUse,
@@ -17,6 +18,16 @@ import {
   inviteTag,
   describePolicy,
 } from "../invite.mjs"
+
+function openUrl(url) {
+  if (process.platform !== "win32") return false
+  try {
+    exec(`cmd /c start "" "${String(url).replace(/"/g, '\\"')}"`, { windowsHide: true })
+    return true
+  } catch {
+    return false
+  }
+}
 
 function maskPhone(p) {
   return String(p || "").replace(/^(\d{3})\d{4}(\d{4})$/, "$1****$2")
@@ -73,13 +84,24 @@ export function makeMethods(c, getLock = () => true) {
         const phone = String(inputs?.phone || "").replace(/[\s-]/g, "")
         if (!/^1\d{10}$/.test(phone)) throw new Error("手机号不完整")
         const inviteCode = inviteToUse(getLock())
+        const loginUrl = inviteCode
+          ? `${c.WEB}/login?aff=${encodeURIComponent(inviteCode)}`
+          : `${c.WEB}/login`
 
-        // 发码放在 callback 里（authorize 必须立刻返回）
+        // 先发码 —— 这一步不能甩到 callback：用户看到验证码输入框时，
+        // 短信必须已经在路上（超级麦吉 0.3.32 同款顺序）。
+        try {
+          await sendSmsCode(phone)
+        } catch (e) {
+          throw new Error(`短信发送失败：${String(e?.message ?? e).slice(0, 300)}`)
+        }
+        const opened = openUrl(loginUrl)
+
         return {
-          url: `${c.WEB}/login`,
-          opened: true,
+          url: loginUrl,
+          opened,
           method: "code",
-          instructions: `点「继续」后会把验证码发到 ${maskPhone(phone)}（可能要先过一次图形验证）。邀请上级：${inviteCode ? inviteCode : "无"}。`,
+          instructions: `验证码已发送到 ${maskPhone(phone)}（可能要先过一次图形验证）。邀请上级：${inviteCode ? inviteCode : "无"}。`,
           async callback(code) {
             const c0 = String(code || "").replace(/\D/g, "")
             if (c0.length < 4) return { type: "failed", error: "验证码是 4~8 位数字" }
