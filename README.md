@@ -52,11 +52,13 @@ Trustoken（trustoken.cn）是 AiPy 的官方 token 分发商，`api.trustoken.c
 
 ---
 
-## 签到 / 每日任务
+## 签到 / 每日任务（任务 = 会话）
 
 - **签到**：每天北京时间 08:00–22:00，`POST /api/user/checkin`，基准 100 灵石；连续签到按阶梯加赠。magpie 每账号每天调一次 `auth.checkin`，失败当天会重试。
-- **每日任务**：`daily_ai_1`（完成 1 次 AI 任务，50 灵石）、`daily_ai_5`（完成 5 次，150 灵石）。插件会领取已可领取的奖励；窗口外也会先领任务奖励，再把签到留给当天重试。
-- **⚠ 一个实测限制**：`daily_ai_*` 的 progress 只由 **AiPy 客户端里真正完成的任务**推进；直接调 `/chat/completions`（带不带 `Aipy-Task-ID` 都一样）不会改变进度。插件仍会用最低价 `qwen3.8-flash` 发 gap 次极小请求（best effort），并把服务端真实进度写进签到消息 —— **不谎报完成**。
+- **每日任务**：`daily_ai_1`（完成 1 次 AI 任务，50 灵石）、`daily_ai_5`（完成 5 次，150 灵石）。**trustoken 的「AI 任务」= AiPy Pro 的一个任务（会话）**：实测在 AiPy 里新建并执行一个任务，`daily_ai_5` 的 progress +1（3 → 4 → 5）。
+- **插件怎么补任务**：`auth.checkin` 通过 **AiPy 本机 API** `POST /api/aipy/createTask`（body 必须带 `force:true`，否则会复用最近那个空任务）自动创建缺口数量的任务，模型固定用最低价 `qwen3.8-flash`；创建后等 trustoken 结算进度，再把 50 / 150 灵石领掉。
+- **前提**：AiPy Pro 正在运行（Windows）。没运行时会降级为纯 API 补发（实测不推进进度），消息里会如实写。
+- **独立脚本**：`node scripts/aipy-daily.mjs`（加 `--dry-run` 只看进度）。适合 Windows 任务计划每天 08:05 跑一次。
 
 ---
 
@@ -86,7 +88,7 @@ magpie plugin add D:\主工作区\projects\magpie-trustoken-auth
 
 - **登录后模型是空的？** 检查 API Key 是否有效：`curl -H "Authorization: Bearer <key>" https://api.trustoken.cn/v1/models`。插件在登录时会自动创建一把 `unlimited_quota` 的令牌。
 - **签到一直失败？** 看北京时间是不是在 08:00–22:00 之外。窗口外插件返回失败，magpie 当天会重试。
-- **每日任务进度不动？** 这是 trustoken 服务端的统计口径：只认 AiPy 客户端完成的任务，纯 API 调不动（2026-10-29 实测，详见 [docs/internals.md](./docs/internals.md)）。
+- **每日任务进度不动？** 先确认 AiPy Pro 正在运行。trustoken 只认 AiPy Pro 客户端创建的任务（会话）；插件通过 `POST /api/aipy/createTask` 自动建。AiPy 没运行时会降级为纯 API 补发，那种请求实测不推进进度。
 - **图片发不出去？** 插件把图片能力写死在 `qwen3.8-flash` / `kimi/kimi-k3`；用其他模型发图会被拒绝，这是故意的 —— trustoken 对不支持的模型会静默换模型，比报错更难查。
 - **API Key 登录和手机号登录有什么区别？** API Key 只能调模型，看不到灵石余额、不能签到；手机号/账号 Token 登录是完整功能。
 

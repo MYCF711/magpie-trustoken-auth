@@ -18,6 +18,7 @@ import { QUOTA_PER_STONE, CHECKIN_WINDOW } from "../context.mjs"
 import { CHEAPEST_MODEL } from "../rates.mjs"
 
 const stones = (quota) => Number(quota || 0) / QUOTA_PER_STONE
+const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 function beijingHour(date = new Date()) {
   return new Date(date.getTime() + 8 * 3600_000).getUTCHours()
@@ -84,38 +85,52 @@ export function makeCheckin(c) {
         }
       }
 
-      // ── ③ 用最低消费模型补每日任务（best effort） ─────────────────
+      // ── ③ 用最低消费模型补每日任务 ───────────────────────────────
+      //
+      // 2026-10-29 实测：trustoken 的「AI 任务」= AiPy Pro 的一个任务（会话）。
+      // 只有 AiPy Pro 客户端自己创建的任务才算；普通 chat 请求、aipyapp Python API 都不算。
+      // AiPy 本地 API：POST /api/aipy/createTask，body 是参数数组，必须带 force:true
+      // （不带 force 会复用最近那个空任务，不新建）。
       tasks = await dailyTaskStatus(token, uid)
       const gaps = tasks.filter(
         (t) => t.status === "in_progress" && Number(t.progress) < Number(t.target),
       )
-      if (gaps.length && apiKey) {
+      if (gaps.length) {
         const need = Math.max(...gaps.map((t) => Number(t.target) - Number(t.progress)))
-        let sent = 0
-        for (let i = 0; i < need; i++) {
-          try {
-            await chatOnce(apiKey, {
-              model: CHEAPEST_MODEL,
-              content: `只回复 OK（${i + 1}）`,
-              max_tokens: 4,
-              headers: {
-                "Aipy-Task-ID": `${taskId()}/2.1.1`,
-                "Aipy-Task-Depth": "0",
-                "Aipy-Task-Type": "task",
-              },
-            })
-            sent++
-          } catch {
-            // 单次失败不影响签到
+        const { ensureAipyTasks } = await import("../aipy-local.mjs")
+        const local = await ensureAipyTasks({ n: need, model: CHEAPEST_MODEL })
+
+        if (local.created > 0) {
+          parts.push(`用最低价 ${CHEAPEST_MODEL} 在 AiPy 建了 ${local.created} 个任务（会话）`)
+          // 等 trustoken 结算进度（实测 20 秒内；最多等 30 秒）
+          for (let i = 0; i < 10; i++) {
+            await sleep(3000)
+            const now = await dailyTaskStatus(token, uid)
+            if (!now.some((t) => t.status === "in_progress" && Number(t.progress) < Number(t.target))) break
+          }
+        } else {
+          parts.push(`AiPy 本机任务不可用（${local.reason}）`)
+          // 降级：纯 API 补发（实测不推进进度，只作尽力而为）
+          if (apiKey) {
+            for (let i = 0; i < need; i++) {
+              try {
+                await chatOnce(apiKey, {
+                  model: CHEAPEST_MODEL,
+                  content: `只回复 OK（${i + 1}）`,
+                  max_tokens: 4,
+                  headers: {
+                    "Aipy-Task-ID": `${taskId()}/2.1.1`,
+                    "Aipy-Task-Depth": "0",
+                    "Aipy-Task-Type": "task",
+                  },
+                })
+              } catch {}
+            }
           }
         }
+
         const after = await dailyTaskStatus(token, uid)
-        const progress = after.map((t) => `${t.progress}/${t.target}`).join("、")
-        const stillOpen = after.some((t) => t.status === "in_progress")
-        parts.push(
-          `用最低价 ${CHEAPEST_MODEL} 发了 ${sent} 次；任务进度 ${progress}` +
-            (stillOpen ? "（服务端只认 AiPy 客户端完成的任务）" : ""),
-        )
+        parts.push(`每日任务进度 ${after.map((t) => `${t.progress}/${t.target}`).join("、")}`)
 
         // 补完若变成可领取，再领一次
         for (const t of after) {
