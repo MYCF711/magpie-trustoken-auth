@@ -43,6 +43,7 @@ export function makeCheckin(c) {
     const parts = []
     let credit = 0
     let claimed = false
+    let windowOpen = true
 
     try {
       // ── ① 签到 ───────────────────────────────────────────────────
@@ -52,20 +53,19 @@ export function makeCheckin(c) {
       } else {
         const hour = beijingHour()
         if (hour < CHECKIN_WINDOW.startHour || hour >= CHECKIN_WINDOW.endHour) {
-          // 窗口外返回 failed，让 magpie 当天晚些时候重试
-          return {
-            outcome: "failed",
-            message: `未到签到窗口（每日 08:00–22:00 北京时间，现在 ${hour} 点）`,
-          }
-        }
-        const r = await doCheckin(token, uid)
-        if (r?.success) {
-          const s = stones(r?.data?.total_reward)
-          credit += s
-          claimed = true
-          parts.push(`签到 +${s} 灵石`)
+          // 窗口外仍然去领任务奖励；签到本身留给 magpie 当天重试
+          windowOpen = false
+          parts.push(`未到签到窗口（每日 08:00–22:00 北京时间，现在 ${hour} 点）`)
         } else {
-          parts.push(`签到未成功：${r?.message || "未知原因"}`)
+          const r = await doCheckin(token, uid)
+          if (r?.success) {
+            const s = stones(r?.data?.total_reward)
+            credit += s
+            claimed = true
+            parts.push(`签到 +${s} 灵石`)
+          } else {
+            parts.push(`签到未成功：${r?.message || "未知原因"}`)
+          }
         }
       }
 
@@ -131,7 +131,7 @@ export function makeCheckin(c) {
       }
 
       return {
-        outcome: claimed ? "claimed" : "done",
+        outcome: claimed ? "claimed" : windowOpen ? "done" : "failed",
         credit: credit || undefined,
         message: parts.join("；"),
       }
