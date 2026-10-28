@@ -1,0 +1,9 @@
+{
+  "package": "magpie-trustoken-auth",
+  "name": "Trustoken（AiPy）",
+  "providers": ["trustoken"],
+  "summary": {
+    "en": "Sign in to Trustoken (AiPy) with a phone code; get the account's live models, 灵石 balance, daily check-in and daily-task rewards.",
+    "zh": "用手机号验证码登录 Trustoken（AiPy），自动签到、领每日任务灵石，模型目录按账号实时拉取。"
+  }
+}
