@@ -6,7 +6,7 @@
 //   ③ 登录失效 → 抛 signIn: "expired"
 
 import { staticModels } from "../context.mjs"
-import { fetchV1Models, asSignInExpired } from "../api.mjs"
+import { fetchV1Models } from "../api.mjs"
 import { mergeModels } from "../models.mjs"
 
 export function makeModels(c) {
@@ -21,10 +21,9 @@ export function makeModels(c) {
       const live = await fetchV1Models(apiKey)
       if (!live.length) return fallback
       return mergeModels(live)
-    } catch (e) {
-      if (e?.status === 401 || e?.status === 403) {
-        throw asSignInExpired("Trustoken API Key 失效，请重新登录")
-      }
+    } catch {
+      // 模型目录是「尽力而为」：上游 401/403 也可能只是网关/WAF 抖动。
+      // 退回静态表，别把整个账号标成登录失效（那会让 chat 也停）。
       return fallback
     }
   }

@@ -15,12 +15,12 @@ Trustoken（trustoken.cn）是 AiPy 的官方 token 分发商，`api.trustoken.c
 
 ## 功能
 
-- **登录** —— 手机号 + 短信验证码；也可以直接粘 API Key（只调模型），或粘账号 `access_token`（绕过短信，完整功能）。
+- **登录** —— 一键读取本机 AiPy Pro 已登录的 OAuth 会话（`%APPDATA%/aipy-pro/aipy` 里的 `trustoken-token`），自动创建/读取平台 API Key。
 - **模型目录** —— 登录后按账号实时拉 `/v1/models`，未登录用 13 个静态模型兜底。
 - **灵石余额** —— `/api/user/self` 的 quota ÷ 5000，卡片上直接显示。
 - **自动签到** —— 北京时间 08:00–22:00；窗口外返回失败，让 magpie 当天晚些时候重试。
 - **每日任务** —— 自动领取 `claimable` 的奖励（50 / 150 灵石）；未完成的用最低价模型补请求。
-- **邀请码** —— 注册新号自动带 `aff_code`；默认作者码 `Chdr`，可固定到某个已登录账号或自定义；每次登录 / 签到自动滚动当前账号自己的码。
+- **邀请码** —— 注册新号自动带 `aff_code`；默认作者码 `Chdr`；每次登录 / 签到自动滚动当前账号自己的码。
 - **图片能力写死** —— 只有 `qwen3.8-flash` 与 `kimi/kimi-k3` 标记为可收图；其余模型一律 `image: false`，绝不把图片发出去被上游路由到别的模型。
 - **模型错误 404** —— 单个模型不可用只搁置该模型，不误伤整个账号。
 
@@ -65,14 +65,11 @@ Trustoken（trustoken.cn）是 AiPy 的官方 token 分发商，`api.trustoken.c
 
 ## 邀请码
 
-学超级麦吉 0.3.32 的「邀请上级」：
-
-- **注册自动带码**：手机号验证码登录时，如果账号不存在，会走 `POST /api/user/register/mobile`，带上 `aff_code`。
-- **三种模式**：默认「自动」——跟随最后一个登录 / 签到的号；也可以固定到某个已登录账号，或自定义任意码。
+- **自动带码**：注册新号时用 `inviteToUse()`（默认作者码 `Chdr`）作为 `aff_code`。
 - **滚动**：每次登录成功、每天签到时，把当前账号自己的 `aff_code` 写进 `~/.cache/magpie/trustoken-invite.json`，下一次注册自动用它。
 - **奖励口径**：活动页原文——邀请人 **1,000 灵石**，被邀请人 **2,500 灵石**（对应 `/api/status` 的 `quota_for_inviter=5,000,000` / `quota_for_invitee=2,500,000`）。
 
-改邀请上级：`magpie plugin login trustoken` → 选 **「Trustoken（AiPy） 邀请上级」** → 选「我的（作者 MYCF711）：Chdr」/「自动」/ 某个已登录账号；或选「邀请上级：自定义码」直接填。
+> 当前版本没有「邀请上级」UI（之前照抄超级麦吉的入口位置不对，已移除）；码的滚动仍然生效。
 
 ---
 
@@ -93,19 +90,18 @@ magpie plugin add D:\主工作区\projects\magpie-trustoken-auth
 装完在 magpie 里：
 
 1. 供应商列表会多一行 **Trustoken（AiPy）**；
-2. 点登录 → 选 **手机号验证码**（或 **账号 Token** / **API Key**）；
+2. 点登录 → 选 **本机登录（读取 AiPy 会话）**；
 3. 登录后模型目录、灵石余额、签到按钮都会出现。
 
 ---
 
 ## 常见问题
 
-- **登录后模型是空的？** 检查 API Key 是否有效：`curl -H "Authorization: Bearer <key>" https://api.trustoken.cn/v1/models`。插件在登录时会自动创建一把 `unlimited_quota` 的令牌。
+- **点登录没反应 / 提示没有 AiPy 登录态？** 先打开 AiPy Pro 登录一次；插件直接读它的 `trustoken-token`，不需要再输手机号/验证码。
+- **为什么没有手机号验证码登录？** Trustoken 的 `/api/sms/code` 在真实浏览器里也会返回 HTTP 400（页面要先过滑块验证），所以插件不重复实现这套表单；先用本机 AiPy 的 OAuth 会话登录。
 - **签到一直失败？** 看北京时间是不是在 08:00–22:00 之外。窗口外插件返回失败，magpie 当天会重试。
 - **每日任务进度不动？** 先确认 AiPy Pro 正在运行。trustoken 只认 AiPy Pro 客户端创建的任务（会话）；插件通过 `POST /api/aipy/createTask` 自动建。AiPy 没运行时会降级为纯 API 补发，那种请求实测不推进进度。
-- **邀请码在哪里改？** `magpie plugin login trustoken` → 「邀请上级」或「邀请上级：自定义码」。默认作者码是 `Chdr`。
 - **图片发不出去？** 插件把图片能力写死在 `qwen3.8-flash` / `kimi/kimi-k3`；用其他模型发图会被拒绝，这是故意的 —— trustoken 对不支持的模型会静默换模型，比报错更难查。
-- **API Key 登录和手机号登录有什么区别？** API Key 只能调模型，看不到灵石余额、不能签到；手机号/账号 Token 登录是完整功能。
 
 ---
 
