@@ -86,7 +86,7 @@ Content-Type: application/json
 
 - `force: true` 必须带 —— 不带会复用最近那个空任务（实测三次调用返回同一个 task id，进度不涨）。
 - 一次调用创建一个新 task 记录并执行；每个任务在 20 秒内结算到 trustoken 的 `daily_ai_5`。
-- 端口是 AiPy 每次启动随机分配的：`netstat -ano -p tcp` + `tasklist /FI "IMAGENAME eq AiPyPro.exe"` 按 PID 匹配 127.0.0.1 的 LISTENING 端口。
+- 端口是 AiPy 每次启动随机分配的：`netstat -ano -p tcp` + `tasklist /FI "IMAGENAME eq AiPyPro.exe"` 按 PID 匹配 127.0.0.1 的 LISTENING 端口。AiPy 同时开多个本地服务（实测 41970 = 任务 API，59095 = 另一个服务），用**带 key 的 `GET /`** 区分：任务 API 回 `Greetings from AiPy Pro 2.1.1!`，另一个回 `Not Found`。
 - `api.key` 在 `%APPDATA%\aipy-pro\aipy` 的 `setting` 表（`category='api', field='key'`）。
 - 实现在 `src/aipy-local.mjs`；独立脚本 `scripts/aipy-daily.mjs`。
 
