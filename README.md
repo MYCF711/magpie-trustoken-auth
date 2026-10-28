@@ -15,7 +15,7 @@ Trustoken（trustoken.cn）是 AiPy 的官方 token 分发商，`api.trustoken.c
 
 ## 功能
 
-- **登录** —— 一键读取本机 AiPy Pro 已登录的 OAuth 会话（`%APPDATA%/aipy-pro/aipy` 里的 `trustoken-token`），自动创建/读取平台 API Key。
+- **登录** —— 独立 Chromium 窗口登录：手机号（拖动滑块 + 短信）/ 微信扫码 / 密码；登录完成自动继续。
 - **模型目录** —— 登录后按账号实时拉 `/v1/models`，未登录用 13 个静态模型兜底。
 - **灵石余额** —— `/api/user/self` 的 quota ÷ 5000，卡片上直接显示。
 - **自动签到** —— 北京时间 08:00–22:00；窗口外返回失败，让 magpie 当天晚些时候重试。
@@ -90,15 +90,15 @@ magpie plugin add D:\主工作区\projects\magpie-trustoken-auth
 装完在 magpie 里：
 
 1. 供应商列表会多一行 **Trustoken（AiPy）**；
-2. 点登录 → 选 **本机登录（读取 AiPy 会话）**；
+2. 点登录 → 选 **浏览器登录（手机号 / 微信 / 密码）**；
 3. 登录后模型目录、灵石余额、签到按钮都会出现。
 
 ---
 
 ## 常见问题
 
-- **点登录没反应 / 提示没有 AiPy 登录态？** 先打开 AiPy Pro 登录一次；插件直接读它的 `trustoken-token`，不需要再输手机号/验证码。
-- **为什么没有手机号验证码登录？** Trustoken 的 `/api/sms/code` 在真实浏览器里也会返回 HTTP 400（页面要先过滑块验证），所以插件不重复实现这套表单；先用本机 AiPy 的 OAuth 会话登录。
+- **点登录没反应？** 插件会拉起一个独立的 Chromium 窗口；在窗口里完成登录（手机号要先拖滑块、收短信），完成后 magpie 自动继续。
+- **滑块/短信在哪里操作？** 都在插件拉起的独立浏览器窗口里，和官方登录页完全一样；插件只负责在页面里捕获登录响应并换取 API Key。
 - **签到一直失败？** 看北京时间是不是在 08:00–22:00 之外。窗口外插件返回失败，magpie 当天会重试。
 - **每日任务进度不动？** 先确认 AiPy Pro 正在运行。trustoken 只认 AiPy Pro 客户端创建的任务（会话）；插件通过 `POST /api/aipy/createTask` 自动建。AiPy 没运行时会降级为纯 API 补发，那种请求实测不推进进度。
 - **图片发不出去？** 插件把图片能力写死在 `qwen3.8-flash` / `kimi/kimi-k3`；用其他模型发图会被拒绝，这是故意的 —— trustoken 对不支持的模型会静默换模型，比报错更难查。
@@ -110,7 +110,7 @@ magpie plugin add D:\主工作区\projects\magpie-trustoken-auth
 | 来源 | 用在哪 |
 |---|---|
 | [magpie-plugin-scaffold](https://github.com/MYCF711/magpie-plugin-scaffold) | 插件骨架、九项钩子、`src/quota.mjs` / `src/chat.mjs` / `src/store.mjs`、check 与语义测试 |
-| [magpie-magicrew-auth](https://github.com/MYCF711/magpie-magicrew-auth) | `index.mjs` 只装配 + hooks 拆分结构、验证码登录与 `completeSignIn` 的返回形状 |
+| [magpie-magicrew-auth](https://github.com/MYCF711/magpie-magicrew-auth) | `index.mjs` 只装配 + hooks 拆分结构、`browser-login.mjs` 的独立浏览器/CDP 登录骨架、`completeSignIn` 的返回形状 |
 | trustoken.cn 网页前端（`/assets/main-*.js`） | 签到 / 每日任务 / 令牌 / 登录端点与字段 |
 | Trustoken 活动中心与 `/api/status` | 灵石换算（500,000 quota = 1 元；100 灵石 = 1 元） |
 
