@@ -146,6 +146,18 @@ export function readAccountCodes() {
   return v && typeof v === "object" ? v : {}
 }
 
+export function isKnownAccount(uid) {
+  const u = String(uid || "").trim()
+  if (!u) return false
+  if (readAccountCodes()[u]) return true
+  try {
+    const all = JSON.parse(readFileSync(join(homedir(), ".config", "magpie", "plugin-auth.json"), "utf8"))
+    return Object.values(all || {}).some((v) => String(v?.uid || "") === u)
+  } catch {
+    return false
+  }
+}
+
 export function noteAccountCode(key, code, accountId = "") {
   const k = String(key || "").trim()
   const c = String(code || "").trim()
@@ -160,7 +172,7 @@ export function noteAccountCode(key, code, accountId = "") {
 /** 最多等 6 秒 —— 登录/签到不能被它拖死 */
 const INVITE_TIMEOUT_MS = 6000
 
-export async function rollInvite(auth) {
+export async function rollInvite(auth, { roll = true } = {}) {
   const token = auth?.accountToken || auth?.refresh
   if (!token) return ""
   try {
@@ -170,7 +182,7 @@ export async function rollInvite(auth) {
     ])
     const code = String(self?.aff_code || "").trim()
     if (!code) return ""
-    writeInvite(code)
+    if (roll) writeInvite(code)
     noteAccountCode(auth.uid || auth.accountId, code, auth.accountId || self?.username || "")
     return code
   } catch {
