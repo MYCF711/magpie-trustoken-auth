@@ -900,3 +900,49 @@ export async function dragSlider(session, p) {
   }
   await cdpInput(session, { type: "mouseReleased", x: p.toX, y: p.toY, button: "left", buttons: 0, clickCount: 1 })
 }
+
+/** 等 OAuth 授权码：监听 `/api/oauth/authorize` 的 302 Location，或 aipy-pro://oauth?code= 请求 */
+export async function waitForOAuthCode(session, { timeout = 120_000 } = {}) {
+  const deadline = Date.now() + timeout
+  const page = await pickLoginPage(session.port, "trustoken.cn")
+  if (!page) return ""
+  const ws = new WebSocket(page.webSocketDebuggerUrl)
+  await new Promise((resolve, reject) => {
+    const t = setTimeout(() => reject(new Error("CDP 连接超时")), 5000)
+    ws.addEventListener("open", () => { clearTimeout(t); resolve() })
+    ws.addEventListener("error", () => { clearTimeout(t); reject(new Error("CDP 连接失败")) })
+  })
+  let code = ""
+  const parse = (u) => {
+    try { const x = new URL(String(u || "")); if (x.protocol === "aipy-pro:" || String(u).startsWith("aipy-pro://")) return x.searchParams.get("code") || "" } catch {}
+    return ""
+  }
+  const onMsg = (ev) => {
+    let m; try { m = JSON.parse(ev.data) } catch { return }
+    if (m.method === "Network.requestWillBeSent") {
+      const u = m.params?.request?.url || ""
+      if (u.includes("aipy-pro://oauth") || u.startsWith("aipy-pro://")) {
+        const c = parse(u); if (c) code = c
+      }
+    }
+    if (m.method === "Network.responseReceived") {
+      const r = m.params?.response || {}
+      const loc = r.headers?.location || r.headers?.Location || ""
+      if (loc.includes("aipy-pro://oauth")) { const c = parse(loc); if (c) code = c }
+    }
+  }
+  ws.addEventListener("message", onMsg)
+  ws.send(JSON.stringify({ id: 11, method: "Network.enable" }))
+  try {
+    while (Date.now() < deadline && !code) {
+      const pages = await (await fetch(`http://127.0.0.1:${session.port}/json/list`)).json().catch(() => [])
+      for (const p of pages) { const c = parse(p.url); if (c) { code = c; break } }
+      if (code) break
+      await new Promise((r) => setTimeout(r, 500))
+    }
+  } finally {
+    ws.removeEventListener("message", onMsg)
+    try { ws.close() } catch {}
+  }
+  return code
+}
