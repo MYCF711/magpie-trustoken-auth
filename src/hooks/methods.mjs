@@ -11,13 +11,12 @@
 // 浏览器全程不弹窗（headless）；滑块由 solveSlider/dragSlider 在页面里完成。
 
 import { createHash, randomBytes } from "node:crypto"
-import { readFileSync } from "node:fs"
-import { join } from "node:path"
 import { fetchSelf, ensureApiKey } from "../api.mjs"
 import { readTrustokenToken } from "../aipy-local.mjs"
 import { exchangeOAuthCode } from "../oauth.mjs"
 import { launchLoginBrowser, closeSession, evalInPage, solveSlider, dragSlider, waitForOAuthCode } from "../browser-login.mjs"
-import { inviteToUse, rollInvite } from "../invite.mjs"
+import { inviteToUse, rollInvite, modeHint, saveInviteChoice } from "../invite.mjs"
+import { defaultGroup, pickGroup, saveGroup, headersFromGroup } from "../header-groups.mjs"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
@@ -27,24 +26,9 @@ function makePkce() {
   return { verifier, challenge }
 }
 
-function aipyHeaders() {
-  let referral = ""
-  try {
-    const p = join(process.env.APPDATA || "", "aipy-pro", "referral")
-    referral = readFileSync(p, "utf8").trim()
-  } catch {}
-  return {
-    ...(referral ? { "X-AIPY-REFERRAL-CODE": referral } : {}),
-    "X-AIPY-VERSION": "2.1.1",
-    "X-AIPYAPP-VERSION": "0.5.0",
-    "X-AIPY-PLATFORM": process.platform,
-    "X-AIPY-ARCH": process.arch,
-  }
-}
-
-function headerHookCode() {
+function headerHookCode(group) {
   return `
-    const __h = ${JSON.stringify(aipyHeaders())};
+    const __h = ${JSON.stringify(headersFromGroup(group))};
     try {
       if (!window.__aipyHeaderHooked) {
         window.__aipyHeaderHooked = true;
@@ -81,9 +65,9 @@ function maskPhone(p) {
   return String(p || "").replace(/^(\d{3})\d{4}(\d{4})$/, "$1****$2")
 }
 
-function fillFormExpr(phone, affCode) {
+function fillFormExpr(phone, affCode, group) {
   return `(() => {
-    ${headerHookCode()}
+    ${headerHookCode(group)}
     const setVal = (sel, val) => {
       const el = document.querySelector(sel);
       if (!el) return false;
@@ -110,9 +94,9 @@ function clickAgreeExpr() {
   return `(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='同意'); if(b){b.click(); return 'agreed'} return 'none' })()`
 }
 
-function fillCodeExpr(code) {
+function fillCodeExpr(code, group) {
   return `(() => {
-    ${headerHookCode()}
+    ${headerHookCode(group)}
     const setVal = (sel, val) => {
       const el = document.querySelector(sel);
       if (!el) return false;
@@ -135,7 +119,7 @@ function fillCodeExpr(code) {
   })()`
 }
 
-async function completeSignIn(c, data) {
+async function completeSignIn(c, data, meta = {}) {
   const access = data?.access_token ?? data?.accessToken ?? data?.token
   if (!access) {
     throw new Error(`登录响应里没有 access_token（字段：${Object.keys(data || {}).join(", ")}）`)
@@ -164,7 +148,7 @@ async function completeSignIn(c, data) {
 }
 
 export function makeMethods(c) {
-  return [
+  const out = [
     {
       type: "oauth",
       label: `${c.PROVIDER_NAME} 手机号登录（无头浏览器）`,
@@ -182,6 +166,7 @@ export function makeMethods(c) {
         const phone = String(inputs?.phone || "").replace(/[\s-]/g, "")
         if (!/^1\d{10}$/.test(phone)) throw new Error("手机号不完整")
         const inviteCode = inviteToUse()
+        const group = pickGroup()
         const { verifier, challenge } = makePkce()
         const authUrl = new URL(`${c.WEB}/api/oauth/authorize`)
         authUrl.search = new URLSearchParams({
@@ -224,7 +209,7 @@ export function makeMethods(c) {
             await sleep(500)
           }
           if (!phoneReady) throw new Error("登录页没找到手机号输入框（OAuth 授权页可能没加载完）")
-          const filled = await evalInPage(session, fillFormExpr(phone, inviteCode))
+          const filled = await evalInPage(session, fillFormExpr(phone, inviteCode, group))
           if (!filled || !JSON.parse(filled).phone) throw new Error("登录页没找到手机号输入框")
           await sleep(250)
           await evalInPage(session, clickSendExpr())
@@ -265,7 +250,7 @@ export function makeMethods(c) {
             const c0 = String(code || "").replace(/\D/g, "")
             if (c0.length < 4) return { type: "failed", error: "验证码是 4~8 位数字" }
             try {
-              await evalInPage(session, fillCodeExpr(c0))
+              await evalInPage(session, fillCodeExpr(c0, group))
               await sleep(800)
 
               // 未勾协议/服务端风控会弹「登录或者注册需要同意…」的二次确认；点头同意。
@@ -315,7 +300,7 @@ export function makeMethods(c) {
                 verifier,
                 redirectUri: "aipy-pro://oauth",
               })
-              return await completeSignIn(c, data)
+              return await completeSignIn(c, data, { group, affCode: inviteCode })
             } catch (e) {
               return { type: "failed", error: String(e?.message ?? e).slice(0, 500) }
             } finally {
@@ -352,4 +337,26 @@ export function makeMethods(c) {
       },
     },
   ]
+
+  // 邀请码按钮：0/留空 = 自动（作者码/滚动码），1 = 当前首选账号。
+  // 保存后再走手机号验证码，注册时读到的就是刚选的码。
+  out.push({
+    type: "oauth",
+    label: `${c.PROVIDER_NAME} 邀请码`,
+    get prompts() {
+      return [{ type: "text", key: "invite", message: "邀请码", placeholder: modeHint() }]
+    },
+    async ask(inputs) {
+      if (!inputs || !Object.prototype.hasOwnProperty.call(inputs, "invite")) {
+        return { type: "text", key: "invite", message: "邀请码", placeholder: modeHint() }
+      }
+      if (!Object.prototype.hasOwnProperty.call(inputs, "phone")) return out[0].prompts[0]
+      return null
+    },
+    async authorize(inputs) {
+      saveInviteChoice(inputs?.invite)
+      return await out[0].authorize(inputs)
+    },
+  })
+  return out
 }

@@ -65,6 +65,7 @@ export function readInvitePolicy() {
     mode,
     code: String(v?.code || "").trim(),
     accountId: String(v?.accountId || "").trim(),
+    uid: String(v?.uid || "").trim(),
     at: String(v?.at || ""),
   }
 }
@@ -75,6 +76,7 @@ export function writeInvitePolicy(policy) {
     mode,
     code: String(policy?.code || "").trim(),
     accountId: String(policy?.accountId || "").trim(),
+    uid: String(policy?.uid || "").trim(),
     at: new Date().toISOString(),
   })
 }
@@ -96,6 +98,45 @@ export function inviteToUse(locked = true) {
 
 export function authorInvite() {
   return AUTHOR_INVITE
+}
+
+/** magpie 账号页「首选」那个 trustoken 账号自己的邀请码 */
+export function preferredInvite() {
+  try {
+    const logins = JSON.parse(readFileSync(join(homedir(), ".config", "magpie", "logins.json"), "utf8"))
+    const rows = (Array.isArray(logins) ? logins : []).filter((r) => r && r.agent === "plugin:trustoken" && r.home)
+    if (!rows.length) return null
+    const first =
+      rows.find((r) => r.first === true) ||
+      rows.filter((r) => Number(r.order) > 0).sort((a, b) => Number(a.order) - Number(b.order))[0] ||
+      rows[0]
+    const auth = JSON.parse(readFileSync(join(homedir(), ".config", "magpie", "plugin-auth.json"), "utf8"))?.[String(first.home || "")]
+    const uid = String(auth?.uid || "").trim()
+    if (!uid) return null
+    const v = readAccountCodes()[uid]
+    if (!v?.code) return null
+    return { code: v.code, accountId: String(v.accountId || uid), uid }
+  } catch {
+    return null
+  }
+}
+
+export function modeHint() {
+  const pol = readInvitePolicy()
+  if (pol.mode === "auto" || !pol.code) return "当前模式：自动，输入 1 切换：首选"
+  return "当前模式：首选，输入 0 切换：自动"
+}
+
+export function saveInviteChoice(raw) {
+  const t = String(raw ?? "").trim()
+  if (t === "1") {
+    const pick = preferredInvite()
+    if (pick) {
+      writeInvitePolicy({ mode: "fixed", code: pick.code, accountId: pick.accountId, uid: pick.uid })
+      return
+    }
+  }
+  writeInvitePolicy({ mode: "auto" })
 }
 
 // ── 见过哪些账号的码 ─────────────────────────────────────────────────

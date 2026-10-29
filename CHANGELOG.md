@@ -1,3 +1,8 @@
+## 0.1.9
+
+- feat: 每个账号一组请求头源（referral/版本/平台/aff_code），默认 189 账号那组；登录新号成功后按 uid 落盘。
+- feat: 新增「邀请码」登录按钮：0/留空=自动（作者码/滚动码），1=当前首选账号。
+
 ## 0.1.8
 
 - feat: 注册/登录请求注入 AiPy 客户端同款 `X-AIPY-*` 请求头；`X-AIPY-REFERRAL-CODE` 读取 `%APPDATA%/aipy-pro/referral`（本机为 `BJ5OOSP-7xpn8zonzw`）。
