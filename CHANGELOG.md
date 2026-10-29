@@ -1,3 +1,7 @@
+## 0.1.7
+
+- feat: 增加「本机登录（读取 AiPy 会话）」，在 AiPy Pro 客户端登录任意手机号后，插件可直接读 token 添加到 magpie。
+
 ## 0.1.6
 
 - fix: 显式设置 `sessionStorage.layout="false"`，确保 OAuth 登录页走 `/api/user/register/mobile`，不被 `/api/user/login/mobile` 的“新号需下载客户端”策略拦截。

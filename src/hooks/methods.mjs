@@ -12,6 +12,7 @@
 
 import { createHash, randomBytes } from "node:crypto"
 import { fetchSelf, ensureApiKey } from "../api.mjs"
+import { readTrustokenToken } from "../aipy-local.mjs"
 import { exchangeOAuthCode } from "../oauth.mjs"
 import { launchLoginBrowser, closeSession, evalInPage, solveSlider, dragSlider, waitForOAuthCode } from "../browser-login.mjs"
 import { inviteToUse, rollInvite } from "../invite.mjs"
@@ -267,6 +268,32 @@ export function makeMethods(c) {
               await closeSession(session).catch(() => {})
             }
           },
+        }
+      },
+    },
+    {
+      type: "api",
+      keyless: true,
+      label: `${c.PROVIDER_NAME} 本机登录（读取 AiPy 会话）`,
+      async authorize() {
+        const tok = await readTrustokenToken()
+        if (!tok?.access_token) throw new Error("本机没有 AiPy 登录态：先在 AiPy Pro 客户端登录这个手机号")
+        const self = await fetchSelf(tok.access_token, "")
+        const uid = self?.id
+        if (!uid) throw new Error("AiPy 会话无效：/api/user/self 没有返回用户")
+        const apiKey = await ensureApiKey(tok.access_token, uid)
+        await rollInvite({ accountToken: tok.access_token, uid, accountId: maskPhone(self?.username) || String(uid) })
+        return {
+          type: "success",
+          access: apiKey,
+          refresh: tok.access_token,
+          expires: Number(tok.expires_at) || Date.now() + 30 * 86400e3,
+          accountId: maskPhone(self?.username) || String(uid),
+          uid: String(uid),
+          apiKey,
+          accountToken: tok.access_token,
+          username: self?.username,
+          quota: self?.quota,
         }
       },
     },
