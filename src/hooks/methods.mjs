@@ -131,7 +131,17 @@ async function completeSignIn(c, data, meta = {}) {
   const apiKey = await ensureApiKey(access, uid)
   const expiresIn = Number(data?.expires_in ?? 2_592_000)
 
-  await rollInvite({ accountToken: access, uid, accountId: maskPhone(phone) || String(uid ?? "") })
+  const ownCode = await rollInvite({ accountToken: access, uid, accountId: maskPhone(phone) || String(uid ?? "") })
+  try {
+    if (meta.group) {
+      saveGroup({
+        ...meta.group,
+        uid,
+        accountId: maskPhone(phone) || String(uid ?? ""),
+        affCode: ownCode || meta.affCode || meta.group.affCode,
+      })
+    }
+  } catch {}
 
   return {
     type: "success",
