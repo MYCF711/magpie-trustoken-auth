@@ -1,3 +1,7 @@
+## 0.1.6
+
+- fix: 显式设置 `sessionStorage.layout="false"`，确保 OAuth 登录页走 `/api/user/register/mobile`，不被 `/api/user/login/mobile` 的“新号需下载客户端”策略拦截。
+
 ## 0.1.5
 
 - fix: OAuth 授权页 302 到 /login 有渲染延迟，改为轮询等待手机号输入框（最多 15 秒），不再固定 800ms 后报「没找到手机号输入框」。
