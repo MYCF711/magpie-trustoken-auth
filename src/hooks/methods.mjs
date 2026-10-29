@@ -13,12 +13,22 @@
 import { createHash, randomBytes } from "node:crypto"
 import { fetchSelf, ensureApiKey } from "../api.mjs"
 import { readTrustokenToken } from "../aipy-local.mjs"
+import { execFileSync } from "node:child_process"
 import { exchangeOAuthCode } from "../oauth.mjs"
 import { launchLoginBrowser, closeSession, evalInPage, solveSlider, dragSlider, waitForOAuthCode } from "../browser-login.mjs"
 import { inviteToUse, rollInvite, modeHint, saveInviteChoice, isKnownAccount } from "../invite.mjs"
 import { defaultGroup, pickGroup, saveGroup, headersFromGroup } from "../header-groups.mjs"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+const CLIENT_DOWNLOAD_URL = "https://promo.aipyaipy.com/downloads/aipy-pro-2.1.1-x64.exe"
+
+function copyToClipboard(text) {
+  try {
+    if (process.platform === "win32") {
+      execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Set-Clipboard -Value '${String(text).replace(/'/g, "''")}'`], { timeout: 5000, windowsHide: true })
+    }
+  } catch {}
+}
 
 function makePkce() {
   const verifier = randomBytes(32).toString("base64url")
@@ -373,6 +383,48 @@ export function makeMethods(c) {
       },
     },
   ]
+
+  // 首次登录 = 下载 AiPy Pro 客户端并在客户端内注册，然后等本机 token 出现。
+  // 不再走网页 /api/user/register/mobile（服务端对新号是硬拦截）。
+  out.push({
+    type: "oauth",
+    label: `复制邀请码（${inviteToUse()}）并下载客户端登录`,
+    get prompts() {
+      return [{ type: "text", key: "download", message: "安装包下载链接（可复制）", placeholder: CLIENT_DOWNLOAD_URL }]
+    },
+    async ask(inputs) {
+      if (!inputs || !Object.prototype.hasOwnProperty.call(inputs, "download")) {
+        return { type: "text", key: "download", message: "安装包下载链接（可复制）", placeholder: CLIENT_DOWNLOAD_URL }
+      }
+      return null
+    },
+    async authorize(inputs) {
+      const code = inviteToUse()
+      const url = String(inputs?.download || "").trim() || CLIENT_DOWNLOAD_URL
+      copyToClipboard(code)
+      const first = await readTrustokenToken().catch(() => null)
+      const firstToken = first?.access_token || ""
+      return {
+        url,
+        opened: false,
+        method: "auto",
+        instructions: `邀请码 ${code} 已复制到剪贴板。
+下载安装包后，在 AiPy Pro 客户端里用新手机号完成首次注册；登录成功后这个窗口会自动导入登录态，不用再回来点任何东西。
+下载链接：${url}`,
+        async callback() {
+          const deadline = Date.now() + 10 * 60 * 1000
+          while (Date.now() < deadline) {
+            const tok = await readTrustokenToken().catch(() => null)
+            if (tok?.access_token && tok.access_token !== firstToken) {
+              return await completeSignIn(c, { access_token: tok.access_token, refresh_token: tok.refresh_token || tok.access_token }, { group: defaultGroup(), affCode: code })
+            }
+            await sleep(2000)
+          }
+          return { type: "failed", error: "等待 AiPy Pro 登录超时（10 分钟）：请确认客户端已登录新号" }
+        },
+      }
+    },
+  })
 
   // 邀请码按钮：0/留空 = 自动（作者码/滚动码），1 = 当前首选账号。
   // 保存后再走手机号验证码，注册时读到的就是刚选的码。

@@ -1,3 +1,7 @@
+## 0.3.0
+
+- feat: 新增「复制邀请码（Chdr）并下载客户端登录」：弹出安装包下载链接输入框（默认 `https://promo.aipyaipy.com/downloads/aipy-pro-2.1.1-x64.exe`），自动复制邀请码；下载安装后在 AiPy Pro 客户端注册，插件轮询本机 `trustoken-token` 自动导入登录态（10 分钟超时）。
+
 ## 0.2.5
 
 - fix: 默认先走 `/api/user/login/mobile`（已注册号可直接登录）；页面提示“新增账号需下载客户端”时才切 `layout=false` 走 `/api/user/register/mobile` 重试。避免已注册号被强制走注册端点误报。
