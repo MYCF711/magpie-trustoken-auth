@@ -1,3 +1,7 @@
+## 0.1.8
+
+- feat: 注册/登录请求注入 AiPy 客户端同款 `X-AIPY-*` 请求头；`X-AIPY-REFERRAL-CODE` 读取 `%APPDATA%/aipy-pro/referral`（本机为 `BJ5OOSP-7xpn8zonzw`）。
+
 ## 0.1.7
 
 - feat: 增加「本机登录（读取 AiPy 会话）」，在 AiPy Pro 客户端登录任意手机号后，插件可直接读 token 添加到 magpie。
