@@ -1,12 +1,5 @@
 name: check
 
-# 每次 push、每个 PR，都跑一遍供应商插件规定。
-#
-# 这条流水线只做一件事：绿了说明这个插件符合 magpie 的插件契约，
-# 可以放心发布；红了就把不合规的那几条打出来。
-#
-# 它不提交、不发布、不碰别人的仓库 —— 收不收是维护者的事。
-
 on:
   push:
     branches: ["**"]
@@ -21,20 +14,12 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
-
-      # magpie 把插件跑在 Bun 里，用同一个运行时验最准
-      - uses: oven-sh/setup-bun@v2
+      - uses: actions/setup-node@v4
         with:
-          bun-version: latest
-
+          node-version: 22
       - name: 供应商插件规定
-        run: bun scripts/check.mjs
-
-      # 作者自己的单元测试（有就跑，没有不拦）
-      - name: 自测（可选）
-        run: |
-          if [ -f tests/smoke.mjs ]; then
-            bun tests/smoke.mjs || true
-          else
-            echo "没有 tests/smoke.mjs，跳过"
-          fi
+        run: node scripts/check.mjs
+      - name: 语义测试
+        run: npm test
+      - name: 打包面预演
+        run: npm pack --dry-run

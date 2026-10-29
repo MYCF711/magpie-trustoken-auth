@@ -67,51 +67,55 @@
       判据：grep 源码里每个模型定义都有 image: true/false，没有省略；
             text-only 用 { input: { text: true, image: false, audio: false, video: false, pdf: false } }
       出处：HOOKS 十一之三（不写 = 厂商未表态，magpie 会按 models.dev 裸 id 投票误判）
+
+□ 15. accountId 是人看的名字，uid 是身份
+      判据：卡片上不会出现 `iam::…` / `urn:…` / uuid / `hw0615…` 这类 ID；
+            手机号是打码的（`189****8051`）；名字取不到时是**空串**而不是 ID；
+            多账号重复登录仍是替换（slug 不变）
+      出处：HOOKS 八 · src/account-name.mjs 的 resolveAccount
 ```
 
 ---
 
-## B 表 · 发版前（七步，一步不能少）
+## B 表 · 发版前（分支 + PR + 受控发布）
 
-> ⚠ **`git push` 只是第 4 步。** 只做 push 就说「已发布」，是本仓库历史上真实踩过的坑：
-> GitHub 仓库右侧会一直写着「暂无发布版本」，npm 上还停在旧版本。
+> ⚠ **禁止直接推 `main`。** git 源用户跟随默认分支 HEAD；未验证提交一旦推上去，
+> 就会直接抵达正在使用的人。唯一入口是功能分支经 PR 检查全绿后合并。
 
 ```
-□ 第 0 步 · 写更新内容（先写，不是发完再补）
-      判据：CHANGELOG 顶部是这个版本的一节，一条一行、说用户能感知的变化
-      出处：UPDATING 四
+□ 第 0 步 · 起功能分支
+      命令：git switch main && git pull --ff-only origin main && git switch -c feat/<改动>
+      判据：当前不是 main；基线是最新 origin/main
 
-□ 第 1 步 · bump version
+□ 第 1 步 · 写更新内容 + bump version
       命令：npm version patch --no-git-tag-version
-      判据：package.json 的 version 变了；没变的话 bun 会命中缓存装回旧产物
-      出处：UPDATING 二 · 第 1 步
+      判据：CHANGELOG 顶部是这个版本；package.json 的 version 变了
+      出处：UPDATING 二 / 四
 
-□ 第 2 步 · 打包面预演
-      命令：npm pack --dry-run
-      判据：清单里有 README.md / CHANGELOG.md / docs/（files 白名单别漏）
+□ 第 2 步 · 合规、语义测试、打包面全过
+      命令：node scripts/check.mjs && npm test && npm pack --dry-run
+      判据：三条退出码全是 0；没有 || true；包里有 README / CHANGELOG / docs
       出处：UPDATING 二 · 第 2 步
 
-□ 第 3 步 · 提交
-      判据：message 用 `<范围>: <小写句子>`，一条 commit 一件事
-      出处：UPDATING 二 · 第 3 步
+□ 第 3 步 · 提交并推功能分支
+      命令：git push -u origin feat/<改动>
+      判据：推的是功能分支，不是 main；一条 commit 一件事
 
-□ 第 4 步 · 推到默认分支
-      命令：git push origin main
-      判据：git 源装的人靠这里检测 —— **推别的分支不算**
-      出处：UPDATING 一
+□ 第 4 步 · PR 全绿后合并
+      命令：gh pr create --base main --fill && gh pr checks --watch
+      判据：rules 成功、分支最新、讨论已解决，然后才合并
+      出处：UPDATING 二 · 第 4 步
 
-□ 第 5 步 · npm publish
-      命令：npm publish
-           （包内 name 与 npm 包名不同、含大写标题时用 npm run publish:npm）
-      判据：返回 `+ <包名>@<版本>`；package.json 的 name 已还原
-      出处：UPDATING 二 · 第 5 步
+□ 第 5 步 · 从已合并的默认分支发 npm
+      命令：git switch main && git pull --ff-only origin main
+            node scripts/release.mjs --yes --npm
+           （包内 name 与 npm 包名不同时自动用 npm run publish:npm）
+      判据：HEAD == origin/main；发布脚本没有推 main；返回 `+ <包名>@<版本>`
 
 □ 第 6 步 · tag + GitHub Release
-      命令：git tag v<version> && git push origin v<version>
-           然后建 Release（有 release.yml 的推 tag 就够；没有的按 UPDATING 手工发）
-      判据：tag 与 package.json 的 version 一致；Release 不是 draft
-      出处：UPDATING 二 · 第 6 步
-      ⚠ Release / tag **不参与** magpie 的更新检测 —— 但少了用户就没有地方看这一版改了什么
+      命令：git tag v<version> && git push origin v<version>（release.mjs 已做则跳过）
+      判据：tag 指向已合并提交且与 version 一致；Release 不是 draft
+      ⚠ release.yml 会再次验证祖先关系、版本、测试和 pack，失败就不发
 
 □ 第 7 步 · 五条验证（每条都要真跑）
       ⓪ node scripts/check-maintenance.mjs → 退出码 0（改了代码必须 bump / bump 必须打 tag）
