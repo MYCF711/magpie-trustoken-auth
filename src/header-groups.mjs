@@ -6,7 +6,7 @@
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
-import { AUTHOR_INVITE, readInvitePolicy } from "./invite.mjs"
+import { AUTHOR_INVITE, readInvite, readInvitePolicy } from "./invite.mjs"
 
 const FILE = () => join(homedir(), ".cache", "magpie", "trustoken-header-groups.json")
 const APPDATA = () => process.env.APPDATA || (process.env.USERPROFILE ? join(process.env.USERPROFILE, "AppData", "Roaming") : "")
@@ -70,12 +70,17 @@ export function groupFor(uid) {
   return (uid && all.accounts?.[String(uid)]) || defaultGroup()
 }
 
-/** 按邀请策略选这次注册用的 header 组：首选 → 该账号组；自动 → 默认 189 组 */
+/** 按邀请策略选这次注册用的 header 组：首选 → 该账号组；自动 → 滚动码所属账号组，没有则 189 默认组 */
 export function pickGroup() {
   const pol = readInvitePolicy()
+  const all = readGroups()
   if ((pol.mode === "fixed" || pol.mode === "custom") && pol.uid) {
-    const all = readGroups()
     if (all.accounts?.[String(pol.uid)]) return all.accounts[String(pol.uid)]
+  }
+  const rolling = readInvite()
+  if (rolling) {
+    const hit = Object.values(all.accounts || {}).find((g) => String(g.affCode || "") === rolling)
+    if (hit) return hit
   }
   return defaultGroup()
 }
