@@ -10,11 +10,19 @@
 //
 // 浏览器全程不弹窗（headless）；滑块由 solveSlider/dragSlider 在页面里完成。
 
+import { createHash, randomBytes } from "node:crypto"
 import { fetchSelf, ensureApiKey } from "../api.mjs"
-import { launchLoginBrowser, closeSession, evalInPage, solveSlider, dragSlider, waitForLogin } from "../browser-login.mjs"
+import { exchangeOAuthCode } from "../oauth.mjs"
+import { launchLoginBrowser, closeSession, evalInPage, solveSlider, dragSlider, waitForOAuthCode } from "../browser-login.mjs"
 import { inviteToUse, rollInvite } from "../invite.mjs"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
+
+function makePkce() {
+  const verifier = randomBytes(32).toString("base64url")
+  const challenge = createHash("sha256").update(verifier).digest("base64url")
+  return { verifier, challenge }
+}
 
 function maskPhone(p) {
   return String(p || "").replace(/^(\d{3})\d{4}(\d{4})$/, "$1****$2")
@@ -55,6 +63,9 @@ function fillCodeExpr(code) {
       return true;
     };
     setVal("#phone-code", ${JSON.stringify(code)});
+    // 关键：AiPy 内嵌页有 window.aipy，登录成功后页面才会跳 /api/oauth/authorize 拿 code；
+    // 纯浏览器里没有这个对象，只会跳 /token。给它一个空壳，Vr() 就会走 OAuth 回调。
+    window.aipy = window.aipy || { send: () => {} };
     const cb = document.querySelector('input[type="checkbox"]');
     if (cb && !cb.checked) cb.click();
     const b = [...document.querySelectorAll('button')].find(x => x.innerText.trim() === "立即登录");
@@ -110,14 +121,24 @@ export function makeMethods(c) {
         const phone = String(inputs?.phone || "").replace(/[\s-]/g, "")
         if (!/^1\d{10}$/.test(phone)) throw new Error("手机号不完整")
         const inviteCode = inviteToUse()
+        const { verifier, challenge } = makePkce()
+        const authUrl = new URL(`${c.WEB}/api/oauth/authorize`)
+        authUrl.search = new URLSearchParams({
+          code_challenge: challenge,
+          code_challenge_method: "S256",
+          response_type: "code",
+          redirect_uri: "aipy-pro://oauth",
+          scope: "all",
+          client_id: "aipy-pro",
+          lang: "zh",
+        }).toString()
+        const authorizeUrl = authUrl.toString()
 
         let session = null
-        let headless = true
         try {
-          session = await launchLoginBrowser(`${c.WEB}/login?aff=${encodeURIComponent(inviteCode)}`, { headless: true })
+          session = await launchLoginBrowser(authorizeUrl, { headless: true })
         } catch {
-          headless = false
-          session = await launchLoginBrowser(`${c.WEB}/login?aff=${encodeURIComponent(inviteCode)}`, { headless: false })
+          session = await launchLoginBrowser(authorizeUrl, { headless: false })
         }
 
         try {
@@ -154,7 +175,7 @@ export function makeMethods(c) {
         }
 
         return {
-          url: `${c.WEB}/login`,
+          url: authorizeUrl,
           // ⚠ 必须是 true：这条链路的浏览器已经由插件自己拉起来了（headless 或降级可见），
           //    opened:false 会让 magpie 再开一次系统默认浏览器 —— 用户就会看到网页登录页。
           opened: true,
@@ -185,11 +206,20 @@ export function makeMethods(c) {
               }
               if (policyError) return { type: "failed", error: policyError }
 
-              const got = await waitForLogin(session, { timeout: 90_000, interval: 1000 })
-              if (!got?.access_token) {
-                return { type: "failed", error: "登录没有返回 access_token：页面可能还在等验证码，或登录未成功。" }
+              const authCode = await waitForOAuthCode(session, { timeout: 90_000 })
+              if (!authCode) {
+                const body = await evalInPage(session, "document.body.innerText").catch(() => "")
+                if (body.includes("新增账号需下载AiPy Pro客户端")) {
+                  return { type: "failed", error: "这个手机号还没注册；Trustoken 仍要求先在 AiPy Pro 客户端完成首次注册。" }
+                }
+                return { type: "failed", error: "没有拿到 OAuth 授权码：登录未完成或页面已关闭。" }
               }
-              return await completeSignIn(c, got)
+              const data = await exchangeOAuthCode({
+                code: authCode,
+                verifier,
+                redirectUri: "aipy-pro://oauth",
+              })
+              return await completeSignIn(c, data)
             } catch (e) {
               return { type: "failed", error: String(e?.message ?? e).slice(0, 500) }
             } finally {

@@ -1,3 +1,8 @@
+## 0.1.3
+
+- feat: 改用 AiPy 客户端同款 OAuth 授权页（`client_id=aipy-pro` + `redirect_uri=aipy-pro://oauth` + PKCE）；
+  登录页注入 `window.aipy`，登录成功后捕获 `aipy-pro://oauth?code=...` 并换 token。
+
 ## 0.1.2
 
 - fix: 回调检测「新增账号需下载 AiPy Pro 客户端」等业务错误，立即返回原因，不再转圈 180 秒。
