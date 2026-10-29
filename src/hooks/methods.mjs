@@ -39,6 +39,7 @@ function fillFormExpr(phone, affCode) {
       el.dispatchEvent(new Event("change", { bubbles: true }));
       return true;
     };
+    try { sessionStorage.setItem("layout", "false"); } catch {}
     setVal("#phone-number", ${JSON.stringify(phone)});
     ${affCode ? `setVal("#aff-code", ${JSON.stringify(affCode)});` : ""}
     const cb = document.querySelector('input[type="checkbox"]');
@@ -66,6 +67,7 @@ function fillCodeExpr(code) {
       el.dispatchEvent(new Event("change", { bubbles: true }));
       return true;
     };
+    try { sessionStorage.setItem("layout", "false"); } catch {}
     setVal("#phone-code", ${JSON.stringify(code)});
     // 关键：AiPy 内嵌页有 window.aipy，登录成功后页面才会跳 /api/oauth/authorize 拿 code；
     // 纯浏览器里没有这个对象，只会跳 /token。给它一个空壳，Vr() 就会走 OAuth 回调。
