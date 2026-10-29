@@ -165,9 +165,29 @@ export function makeMethods(c) {
             if (c0.length < 4) return { type: "failed", error: "验证码是 4~8 位数字" }
             try {
               await evalInPage(session, fillCodeExpr(c0))
-              const got = await waitForLogin(session, { timeout: 180_000, interval: 1200 })
+
+              // 点「立即登录」后先看页面有没有直接给出业务错误（尤其是未注册号的拦截）。
+              // 以前这里直接 waitForLogin 180 秒，页面明明已经弹了提示，magpie 还一直转。
+              let policyError = ""
+              for (let i = 0; i < 12; i++) {
+                let body = ""
+                try { body = await evalInPage(session, "document.body.innerText") } catch { break }
+                if (body.includes("新增账号需下载AiPy Pro客户端")) {
+                  policyError = "这个手机号在 Trustoken 侧还没注册。服务端已关闭网页注册：新号码必须在 AiPy Pro 客户端首次运行并完成注册后，才能用网页验证码登录。"
+                  break
+                }
+                if (/验证码错误|验证码已过期|请输入正确的验证码/.test(body)) {
+                  policyError = "验证码错误或已过期，请重新获取验证码。"
+                  break
+                }
+                if (body.includes("登录成功")) break
+                await sleep(500)
+              }
+              if (policyError) return { type: "failed", error: policyError }
+
+              const got = await waitForLogin(session, { timeout: 90_000, interval: 1000 })
               if (!got?.access_token) {
-                return { type: "failed", error: "登录没有返回 access_token（页面可能改版，或登录没有成功）" }
+                return { type: "failed", error: "登录没有返回 access_token：页面可能还在等验证码，或登录未成功。" }
               }
               return await completeSignIn(c, got)
             } catch (e) {
