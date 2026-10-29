@@ -155,7 +155,9 @@ export function makeMethods(c) {
 
         return {
           url: `${c.WEB}/login`,
-          opened: false,
+          // ⚠ 必须是 true：这条链路的浏览器已经由插件自己拉起来了（headless 或降级可见），
+          //    opened:false 会让 magpie 再开一次系统默认浏览器 —— 用户就会看到网页登录页。
+          opened: true,
           method: "code",
           instructions: `验证码已发送到 ${maskPhone(phone)}。把短信里的验证码填到下面，插件会自动完成登录。邀请上级：${inviteCode || "无"}。`,
           async callback(code) {
