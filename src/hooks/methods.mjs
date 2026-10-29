@@ -11,6 +11,8 @@
 // 浏览器全程不弹窗（headless）；滑块由 solveSlider/dragSlider 在页面里完成。
 
 import { createHash, randomBytes } from "node:crypto"
+import { readFileSync } from "node:fs"
+import { join } from "node:path"
 import { fetchSelf, ensureApiKey } from "../api.mjs"
 import { readTrustokenToken } from "../aipy-local.mjs"
 import { exchangeOAuthCode } from "../oauth.mjs"
@@ -25,12 +27,63 @@ function makePkce() {
   return { verifier, challenge }
 }
 
+function aipyHeaders() {
+  let referral = ""
+  try {
+    const p = join(process.env.APPDATA || "", "aipy-pro", "referral")
+    referral = readFileSync(p, "utf8").trim()
+  } catch {}
+  return {
+    ...(referral ? { "X-AIPY-REFERRAL-CODE": referral } : {}),
+    "X-AIPY-VERSION": "2.1.1",
+    "X-AIPYAPP-VERSION": "0.5.0",
+    "X-AIPY-PLATFORM": process.platform,
+    "X-AIPY-ARCH": process.arch,
+  }
+}
+
+function headerHookCode() {
+  return `
+    const __h = ${JSON.stringify(aipyHeaders())};
+    try {
+      if (!window.__aipyHeaderHooked) {
+        window.__aipyHeaderHooked = true;
+        const __open = XMLHttpRequest.prototype.open;
+        const __send = XMLHttpRequest.prototype.send;
+        XMLHttpRequest.prototype.open = function (m, u) { this.__aipyUrl = String(u); return __open.apply(this, arguments); };
+        XMLHttpRequest.prototype.send = function () {
+          try {
+            if (/\/api\/user\//.test(this.__aipyUrl || "")) {
+              for (const [k, v] of Object.entries(__h)) if (v) this.setRequestHeader(k, v);
+            }
+          } catch {}
+          return __send.apply(this, arguments);
+        };
+        const __fetch = window.fetch;
+        window.fetch = async function (...a) {
+          try {
+            const u = typeof a[0] === "string" ? a[0] : (a[0] && a[0].url) || "";
+            if (/\/api\/user\//.test(u)) {
+              const init = a[1] || {};
+              const hd = new Headers(init.headers || {});
+              for (const [k, v] of Object.entries(__h)) if (v) hd.set(k, v);
+              a[1] = { ...init, headers: hd };
+            }
+          } catch {}
+          return __fetch.apply(this, a);
+        };
+      }
+    } catch {}
+  `
+}
+
 function maskPhone(p) {
   return String(p || "").replace(/^(\d{3})\d{4}(\d{4})$/, "$1****$2")
 }
 
 function fillFormExpr(phone, affCode) {
   return `(() => {
+    ${headerHookCode()}
     const setVal = (sel, val) => {
       const el = document.querySelector(sel);
       if (!el) return false;
@@ -59,6 +112,7 @@ function clickAgreeExpr() {
 
 function fillCodeExpr(code) {
   return `(() => {
+    ${headerHookCode()}
     const setVal = (sel, val) => {
       const el = document.querySelector(sel);
       if (!el) return false;
