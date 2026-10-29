@@ -77,7 +77,6 @@ function fillFormExpr(phone, affCode, group) {
       el.dispatchEvent(new Event("change", { bubbles: true }));
       return true;
     };
-    try { sessionStorage.setItem("layout", "false"); } catch {}
     setVal("#phone-number", ${JSON.stringify(phone)});
     ${affCode ? `setVal("#aff-code", ${JSON.stringify(affCode)});` : ""}
     const cb = document.querySelector('input[type="checkbox"]');
@@ -88,6 +87,10 @@ function fillFormExpr(phone, affCode, group) {
 
 function clickSendExpr() {
   return `(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='获取验证码'); if(!b) return 'no-button'; b.click(); return 'clicked' })()`
+}
+
+function clickLoginExpr() {
+  return `(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='立即登录'); if(!b) return 'no-button'; b.click(); return 'clicked' })()`
 }
 
 function clickAgreeExpr() {
@@ -106,7 +109,6 @@ function fillCodeExpr(code, group) {
       el.dispatchEvent(new Event("change", { bubbles: true }));
       return true;
     };
-    try { sessionStorage.setItem("layout", "false"); } catch {}
     setVal("#phone-code", ${JSON.stringify(code)});
     // 关键：AiPy 内嵌页有 window.aipy，登录成功后页面才会跳 /api/oauth/authorize 拿 code；
     // 纯浏览器里没有这个对象，只会跳 /token。给它一个空壳，Vr() 就会走 OAuth 回调。
@@ -291,10 +293,19 @@ export function makeMethods(c) {
               // 点「立即登录」后先看页面有没有直接给出业务错误（尤其是未注册号的拦截）。
               // 以前这里直接 waitForLogin 180 秒，页面明明已经弹了提示，magpie 还一直转。
               let policyError = ""
+              let retriedRegister = false
               for (let i = 0; i < 12; i++) {
                 let body = ""
                 try { body = await evalInPage(session, "document.body.innerText") } catch { break }
                 if (body.includes("新增账号需下载AiPy Pro客户端")) {
+                  if (!retriedRegister) {
+                    // 先走 login/mobile（已注册号）；被新号策略拦住时，再切 register/mobile 重试一次。
+                    retriedRegister = true
+                    await evalInPage(session, `sessionStorage.setItem("layout", "false")`).catch(() => {})
+                    await evalInPage(session, clickLoginExpr()).catch(() => {})
+                    await sleep(1200)
+                    continue
+                  }
                   policyError = "这个手机号在 Trustoken 侧还没注册。服务端已关闭网页注册：新号码必须在 AiPy Pro 客户端首次运行并完成注册后，才能用网页验证码登录。"
                   break
                 }

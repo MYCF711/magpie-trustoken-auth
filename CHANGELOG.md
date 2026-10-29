@@ -1,3 +1,7 @@
+## 0.2.5
+
+- fix: 默认先走 `/api/user/login/mobile`（已注册号可直接登录）；页面提示“新增账号需下载客户端”时才切 `layout=false` 走 `/api/user/register/mobile` 重试。避免已注册号被强制走注册端点误报。
+
 ## 0.2.4
 
 - fix: header 注入脚本里 `/\/api\/user\//` 正则被模板字符串吃掉转义，页面抛 `SyntaxError: Unexpected token 'for'`，导致每轮填充都失败、最终误报“没找到手机号输入框”。
