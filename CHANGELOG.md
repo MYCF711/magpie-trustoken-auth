@@ -1,3 +1,8 @@
+## 0.1.4
+
+- fix: OAuth 登录点击后处理「登录或者注册需要同意《用户协议》和《隐私协议》」二次确认；
+  实测同意后走 `/api/user/register/mobile`，不再被“新增账号需下载 AiPy Pro 客户端”拦截。
+
 ## 0.1.3
 
 - feat: 改用 AiPy 客户端同款 OAuth 授权页（`client_id=aipy-pro` + `redirect_uri=aipy-pro://oauth` + PKCE）；

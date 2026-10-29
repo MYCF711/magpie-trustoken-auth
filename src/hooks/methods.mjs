@@ -51,6 +51,10 @@ function clickSendExpr() {
   return `(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='获取验证码'); if(!b) return 'no-button'; b.click(); return 'clicked' })()`
 }
 
+function clickAgreeExpr() {
+  return `(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='同意'); if(b){b.click(); return 'agreed'} return 'none' })()`
+}
+
 function fillCodeExpr(code) {
   return `(() => {
     const setVal = (sel, val) => {
@@ -186,6 +190,17 @@ export function makeMethods(c) {
             if (c0.length < 4) return { type: "failed", error: "验证码是 4~8 位数字" }
             try {
               await evalInPage(session, fillCodeExpr(c0))
+              await sleep(800)
+
+              // 未勾协议/服务端风控会弹「登录或者注册需要同意…」的二次确认；点头同意。
+              // 实测：同意之后 OAuth 页会走 /api/user/register/mobile，而不是被
+              // “新增账号需下载 AiPy Pro 客户端”拦住。
+              for (let i = 0; i < 4; i++) {
+                const body = await evalInPage(session, "document.body.innerText").catch(() => "")
+                if (!body.includes("登录或者注册需要同意")) break
+                await evalInPage(session, clickAgreeExpr()).catch(() => {})
+                await sleep(900)
+              }
 
               // 点「立即登录」后先看页面有没有直接给出业务错误（尤其是未注册号的拦截）。
               // 以前这里直接 waitForLogin 180 秒，页面明明已经弹了提示，magpie 还一直转。
@@ -200,6 +215,11 @@ export function makeMethods(c) {
                 if (/验证码错误|验证码已过期|请输入正确的验证码/.test(body)) {
                   policyError = "验证码错误或已过期，请重新获取验证码。"
                   break
+                }
+                if (body.includes("登录或者注册需要同意")) {
+                  await evalInPage(session, clickAgreeExpr()).catch(() => {})
+                  await sleep(900)
+                  continue
                 }
                 if (body.includes("登录成功")) break
                 await sleep(500)
