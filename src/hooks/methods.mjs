@@ -15,7 +15,7 @@ import { fetchSelf, ensureApiKey } from "../api.mjs"
 import { readTrustokenToken } from "../aipy-local.mjs"
 import { exchangeOAuthCode } from "../oauth.mjs"
 import { launchLoginBrowser, closeSession, evalInPage, solveSlider, dragSlider, waitForOAuthCode } from "../browser-login.mjs"
-import { inviteToUse, rollInvite, modeHint, saveInviteChoice } from "../invite.mjs"
+import { inviteToUse, rollInvite, modeHint, saveInviteChoice, isKnownAccount } from "../invite.mjs"
 import { defaultGroup, pickGroup, saveGroup, headersFromGroup } from "../header-groups.mjs"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -131,7 +131,8 @@ async function completeSignIn(c, data, meta = {}) {
   const apiKey = await ensureApiKey(access, uid)
   const expiresIn = Number(data?.expires_in ?? 2_592_000)
 
-  const ownCode = await rollInvite({ accountToken: access, uid, accountId: maskPhone(phone) || String(uid ?? "") })
+  const known = isKnownAccount(uid)
+  const ownCode = await rollInvite({ accountToken: access, uid, accountId: maskPhone(phone) || String(uid ?? "") }, { roll: !known })
   try {
     if (meta.group) {
       saveGroup({
@@ -331,7 +332,7 @@ export function makeMethods(c) {
         const uid = self?.id
         if (!uid) throw new Error("AiPy 会话无效：/api/user/self 没有返回用户")
         const apiKey = await ensureApiKey(tok.access_token, uid)
-        await rollInvite({ accountToken: tok.access_token, uid, accountId: maskPhone(self?.username) || String(uid) })
+        await rollInvite({ accountToken: tok.access_token, uid, accountId: maskPhone(self?.username) || String(uid) }, { roll: false })
         return {
           type: "success",
           access: apiKey,
