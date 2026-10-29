@@ -280,7 +280,7 @@ const CDP_COOLDOWN_MS = 30 * 60_000
  *   把扩展 / 组件更新 / 同步 / 首次运行向导 / 后台网络全关掉，
  *   再补 `--remote-allow-origins=*`（新版 Chrome 连 CDP 的 WebSocket 要它）。
  */
-export async function launchLoginBrowser(url, { candidates } = {}) {
+export async function launchLoginBrowser(url, { candidates, headless = false } = {}) {
   // 冷却期内不再 spawn —— 本机接管不了就是接管不了，反复试只会反复弹窗
   if (Date.now() < cdpDownUntil) {
     throw new Error("本机浏览器不接受自动接管（刚才失败过，30 分钟内不再尝试），直接用手动登录")
@@ -305,7 +305,7 @@ export async function launchLoginBrowser(url, { candidates } = {}) {
   //   第一个不行就交给调用方走手动登录，别再用窗口堆失败。
   const cand = list[0]
   try {
-    return await launchOne(cand, url)
+    return await launchOne(cand, url, { headless })
   } catch (e) {
     // 记下这次失败：30 分钟内不再自动拉浏览器（想提前恢复就重启 magpie）
     cdpDownUntil = Date.now() + CDP_COOLDOWN_MS
@@ -319,7 +319,7 @@ export async function launchLoginBrowser(url, { candidates } = {}) {
  * 用**指定**的一个浏览器起一次登录窗口。
  * 失败时保证：进程已杀、目录已删（不会给后面留垃圾）。
  */
-async function launchOne(cand, url) {
+async function launchOne(cand, url, { headless = false } = {}) {
   const dir = newProfileDir()
 
   // ⚠ 残留会让这次「看起来起来了、其实什么都没做」—— 一次性目录里通常没有，
@@ -364,11 +364,12 @@ async function launchOne(cand, url) {
         "--disable-prompt-on-repost",
         "--disable-domain-reliability",
         "--password-store=basic",
+        ...(headless ? ["--headless=new", "--window-size=1280,900", "--disable-gpu"] : []),
         url,
       ],
       // 某些国产浏览器不接受部分参数会直接退出，stdio 必须 ignore，
       // 否则它往 stdout 写的吐槽会污染 magpie 的日志
-      { stdio: "ignore", detached: false, windowsHide: false },
+      { stdio: "ignore", detached: false, windowsHide: Boolean(headless) },
     )
   } catch (e) {
     await cleanupFailed({ dir, exe: cand.path })
