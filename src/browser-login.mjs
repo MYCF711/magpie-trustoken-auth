@@ -805,22 +805,41 @@ const SOLVE_SLIDER = `(() => {
   const tctx = tc.getContext("2d"); tctx.drawImage(tileImg, 0, 0, tw, th);
   const td = tctx.getImageData(0, 0, tw, th).data;
   const ty = Math.round(tr.top - br.top);
+  const gray = (d, w, h) => {
+    const g = new Float32Array(w * h);
+    for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = 0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2];
+    return g;
+  };
+  const grad = (g, w, h) => {
+    const o = new Float32Array(w * h);
+    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
+      const i = y * w + x;
+      const gx = g[i + 1] - g[i - 1], gy = g[i + w] - g[i - w];
+      o[i] = Math.sqrt(gx * gx + gy * gy);
+    }
+    return o;
+  };
+  const bEdge = grad(gray(bd, bw, bh), bw, bh);
+  const tEdge = grad(gray(td, tw, th), tw, th);
   let best = null;
   for (let x = 0; x <= bw - tw; x++) {
-    let sum = 0, n = 0;
-    for (let yy = 0; yy < th; yy += 2) {
-      for (let xx = 0; xx < tw; xx += 2) {
+    let n = 0, st = 0, sp = 0, stt = 0, spp = 0, stp = 0;
+    for (let yy = 1; yy < th - 1; yy++) {
+      for (let xx = 1; xx < tw - 1; xx++) {
         const a = td[((yy * tw + xx) * 4) + 3];
-        if (a > 128) {
-          const idx = (((ty + yy) * bw) + (x + xx)) * 4;
-          sum += 0.299 * bd[idx] + 0.587 * bd[idx + 1] + 0.114 * bd[idx + 2];
-          n++;
-        }
+        if (a <= 128) continue;
+        const tv = tEdge[yy * tw + xx];
+        const pv = bEdge[(ty + yy) * bw + (x + xx)];
+        n++; st += tv; sp += pv; stt += tv * tv; spp += pv * pv; stp += tv * pv;
       }
     }
-    if (!n) continue;
-    const mean = sum / n;
-    if (!best || mean < best.mean) best = { mean, x };
+    if (n < 50) continue;
+    const mt = st / n, mp = sp / n;
+    const vt = stt / n - mt * mt, vp = spp / n - mp * mp;
+    const cov = stp / n - mt * mp;
+    const den = Math.sqrt(vt * vp);
+    const score = den > 0 ? cov / den : -1;
+    if (!best || score > best.score) best = { score, x };
   }
   if (!best) return "";
   const A = bw, P = Math.round(hr.width), M = Math.round(tr.left - br.left), W = tw;
@@ -831,7 +850,7 @@ const SOLVE_SLIDER = `(() => {
   return JSON.stringify({
     sig: (bgImg.src || "").slice(30, 90) + "|" + (tileImg.src || "").slice(30, 90),
     target: best.x,
-    mean: best.mean,
+    score: best.score,
     fromX: hr.left + hr.width / 2,
     fromY: hr.top + hr.height / 2,
     toX: targetHandleLeft + hr.width / 2,
