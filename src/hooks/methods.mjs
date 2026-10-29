@@ -146,11 +146,30 @@ export function makeMethods(c) {
         }
 
         try {
-          await sleep(800)
-          await evalInPage(session, `(() => { const t=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='手机号'); t&&t.click(); return 'ok' })()`)
-          await sleep(250)
+          // OAuth 授权页是 302 → /login，headless 首屏可能还没渲染完；
+          // 这里等到手机号输入框真正出现，而不是固定 sleep 800ms 后硬填。
+          let phoneReady = false
+          for (let i = 0; i < 30; i++) {
+            let state = ""
+            try {
+              state = await evalInPage(session, `JSON.stringify({ phone: !!document.querySelector('#phone-number'), tab: [...document.querySelectorAll('button')].some(x => x.innerText.trim() === '手机号'), text: document.body.innerText.slice(0, 120) })`)
+            } catch {}
+            if (state) {
+              try {
+                const o = JSON.parse(state)
+                if (o.phone) { phoneReady = true; break }
+                if (o.text.includes("无效的重定向地址")) throw new Error("OAuth 授权页提示：无效的重定向地址")
+                if (o.tab) await evalInPage(session, `(() => { const t=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='手机号'); t && t.click(); return 'ok' })()`).catch(() => {})
+              } catch (e) {
+                if (String(e.message).includes("无效的重定向地址")) throw e
+              }
+            }
+            await sleep(500)
+          }
+          if (!phoneReady) throw new Error("登录页没找到手机号输入框（OAuth 授权页可能没加载完）")
           const filled = await evalInPage(session, fillFormExpr(phone, inviteCode))
           if (!filled || !JSON.parse(filled).phone) throw new Error("登录页没找到手机号输入框")
+          await sleep(250)
           await evalInPage(session, clickSendExpr())
           await sleep(600)
 
