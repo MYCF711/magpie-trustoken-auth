@@ -1,20 +1,19 @@
 #!/usr/bin/env node
-// release.mjs —— 把「发布」从七步里的记忆题变成一条命令
+// release.mjs —— 只从「已经通过 PR 合进默认分支」的提交发布
 //
-// 为什么要有它：push 不是发布。真实的漏法是「代码推上去了，npm 没发、tag 没打、
-// Release 没建」，而没有任何命令会报错 —— 表现只是 GitHub 右侧一直写着
-// 「暂无发布版本」、用户永远停在旧版本。这个脚本把第 5~6 步（npm / tag / Release）
-// 连同前置条件一起做成可执行、可预演的动作。
+// 为什么要有它：push 不是发布，未验证的 push 更不能直接变成用户手里的版本。
+// 这个脚本把第 5~6 步（npm / tag / Release）连同前置条件一起做成可执行、可预演的动作。
+// 它**不会再推默认分支**：功能分支 → PR → CI 通过 → 合并，必须在运行本脚本之前完成。
 //
 //   node scripts/release.mjs                 # 预演：列计划 + 逐项体检，什么都不改
-//   node scripts/release.mjs --yes           # 真做：tag + push + Release
+//   node scripts/release.mjs --yes           # 真做：tag + push tag + Release
 //   node scripts/release.mjs --yes --npm     # 再加 npm 发布（有 publish:npm 脚本就用它）
 //
 // 体检项（任一不过就退出码 1，且 --yes 也不动手）：
 //   ① package.json 有 version               ② CHANGELOG 有这一版那一段
 //   ③ 工作区干净                            ④ 当前在默认分支
-//   ⑤ 不落后远端                            ⑥ tag 还没被占
-//   ⑦ 推得上去（远端可达）
+//   ⑤ HEAD 与 origin/<默认分支> 完全一致     ⑥ tag 还没被占
+//   ⑦ 远端可达                              ⑧ 合规检查 / 测试 / pack 预演全过
 //
 // 需要 GitHub token 才能建 Release：
 //   GITHUB_TOKEN / GH_TOKEN 环境变量。没有也能跑 —— 它会打印手工建 Release 的命令。
@@ -116,6 +115,7 @@ const releaseBody = stripCause(section)
 
 let branch = ""
 let remote = ""
+let defaultBranch = "main"
 try {
   branch = sh("git rev-parse --abbrev-ref HEAD")
   remote = sh("git config --get remote.origin.url")
@@ -123,13 +123,10 @@ try {
   bad("这不是一个 git 仓库（或没有 origin）")
 }
 if (branch) {
-  let def = ""
   try {
-    def = sh("git symbolic-ref --short refs/remotes/origin/HEAD").replace(/^origin\//, "")
-  } catch {
-    def = "main"
-  }
-  if (branch !== def) bad(`当前分支是 ${branch}，默认分支是 ${def} —— magpie 的 git 源只认默认分支`)
+    defaultBranch = sh("git symbolic-ref --short refs/remotes/origin/HEAD").replace(/^origin\//, "")
+  } catch {}
+  if (branch !== defaultBranch) bad(`当前分支是 ${branch}，默认分支是 ${defaultBranch} —— 先提 PR 并合并到默认分支`)
 }
 if (branch) {
   const dirty = shOk("git diff --quiet") && shOk("git diff --cached --quiet")
@@ -145,16 +142,18 @@ const gh = remote ? parseRepo(remote) : null
 if (!gh) bad(`remote.origin 不是 GitHub 仓库（${remote || "空"}）—— 这个脚本只处理 GitHub`)
 
 let behind = 0
+let ahead = 0
 if (gh && branch) {
   try {
     sh("git fetch origin --quiet")
-    const counts = sh(`git rev-list --left-right --count origin/${branch}...HEAD`)
+    const counts = sh(`git rev-list --left-right --count origin/${defaultBranch}...HEAD`)
     const [b, a] = counts.split(/\s+/).map(Number)
     behind = b || 0
-    if (behind > 0) bad(`落后远端 ${behind} 个提交 —— 先 pull / merge，别在旧基线上发版`)
-    if (a > 0) note(`本地领先远端 ${a} 个提交（发布时会一起推上去）`)
-  } catch {
-    note("git fetch 失败 —— 跳过「是否落后远端」检查")
+    ahead = a || 0
+    if (behind > 0) bad(`落后远端 ${behind} 个提交 —— 先同步已合并的默认分支，别在旧基线上发版`)
+    if (ahead > 0) bad(`本地领先远端 ${ahead} 个提交 —— 不许直接推默认分支；先起分支、提 PR、等 CI 通过后合并`)
+  } catch (e) {
+    bad(`git fetch 失败，无法证明 HEAD 是远端已合并提交：${String(e.stderr || e.message).trim()}`)
   }
 }
 
@@ -173,23 +172,45 @@ if (gh) {
   }
 }
 
+// ── ⑧ 发布前真实检查：测试不是「可选」，失败就不产生任何远端副作用 ─────
+
+const preflight = []
+if (existsSync(join(ROOT, "scripts", "check.mjs"))) preflight.push("node scripts/check.mjs")
+if (pkg.scripts?.test) {
+  preflight.push("npm test")
+} else if (existsSync(join(ROOT, "tests"))) {
+  preflight.push("node --test")
+}
+preflight.push("npm pack --dry-run")
+
+if (problems.length === 0) {
+  for (const cmd of preflight) {
+    console.log(C.dim(`\n发布前检查：${cmd}`))
+    try {
+      execSync(cmd, { cwd: ROOT, stdio: "inherit" })
+    } catch {
+      bad(`发布前检查失败：${cmd}`)
+    }
+  }
+}
+
 // ── 体检结果 ─────────────────────────────────────────────────────────
 
 const CHANGELOG_STEPS = [
   "第 0 步 写 CHANGELOG",
   "第 1 步 bump version",
-  "第 2 步 npm pack --dry-run",
-  "第 3 步 提交",
-  "第 4 步 git push <默认分支>",
+  "第 2 步 合规检查 / 测试 / pack 预演",
+  "第 3 步 提交到功能分支",
+  "第 4 步 push 功能分支 → PR → CI 通过 → 合并",
   "第 5 步 npm publish（本脚本的 --npm）",
   "第 6 步 tag + Release（本脚本）",
-  "第 7 步 四条验证",
+  "第 7 步 五条验证",
 ]
 
 console.log(C.bold(`\n发布预演 · ${gh ? `${gh.owner}/${gh.repo}` : "(未知仓库)"} · ${tag}\n`))
-console.log(C.dim("七步里这一步在做什么："))
-console.log(C.dim("  0 写 CHANGELOG → 1 bump → 2 pack 预演 → 3 提交 → 4 push →"))
-console.log(C.dim("  5 npm publish → 6 tag+Release → 7 四条验证"))
+console.log(C.dim("发布流程里这一步在做什么："))
+console.log(C.dim("  0 写 CHANGELOG → 1 bump → 2 检查 → 3 功能分支提交 → 4 PR 合并 →"))
+console.log(C.dim("  5 npm publish → 6 tag+Release → 7 五条验证"))
 console.log(C.dim(`  ${CHANGELOG_STEPS.join(" · ")}\n`))
 
 if (problems.length) {
@@ -199,14 +220,13 @@ if (problems.length) {
   process.exit(1)
 }
 
-console.log(C.green("✓ 体检通过：版本 / CHANGELOG / 工作区 / 分支 / tag 都没问题\n"))
+console.log(C.green("✓ 体检通过：版本 / CHANGELOG / 工作区 / 已合并 HEAD / 检查与测试 / tag 都没问题\n"))
 for (const n of notes) console.log(C.yellow(`  ! ${n}`))
 
 // ── 计划 ─────────────────────────────────────────────────────────────
 
 const plan = []
-plan.push({ what: `git push origin ${branch}`, why: "第 4 步：git 源检测看默认分支 HEAD" })
-plan.push({ what: `git tag ${tag} && git push origin ${tag}`, why: "第 6 步：tag 让「某 bug 出在哪版」可查" })
+plan.push({ what: `git tag ${tag} && git push origin ${tag}`, why: "第 6 步：只给已合并的 HEAD 打 tag；不推默认分支" })
 plan.push({
   what: `POST /repos/${gh.owner}/${gh.repo}/releases`,
   why: `第 6 步：Release 正文 = CHANGELOG 的 ${version} 段（${releaseBody.split("\n").length} 行，已去掉 > 起因）`,
@@ -215,7 +235,7 @@ if (ALSO_NPM) {
   const script = pkg.scripts?.["publish:npm"] ? "npm run publish:npm" : "npm publish"
   plan.push({ what: script, why: "第 5 步：npm 源的用户比 registry 上的 version" })
 }
-plan.push({ what: "四条验证", why: "第 7 步：npm 版本 / tarball 内容 / magpie plugin list / Release 在" })
+plan.push({ what: "五条验证", why: "第 7 步：维护状态 / npm 版本 / tarball 内容 / magpie plugin list / Release 在" })
 
 console.log(C.bold("计划：\n"))
 for (const [i, s] of plan.entries()) {
@@ -246,7 +266,6 @@ function run(cmd, label) {
   }
 }
 
-const pushed = run(`git push origin ${branch}`, `push ${branch}`)
 const tagged = run(`git tag ${tag} && git push origin ${tag}`, `tag ${tag}`)
 
 let released = false
@@ -369,8 +388,9 @@ if (ALSO_NPM) {
 
 // ── 第 7 步留给人看的清单 ─────────────────────────────────────────────
 
-console.log(C.bold("\n第 7 步 · 四条验证（逐条跑，别只看版本号）：\n"))
+console.log(C.bold("\n第 7 步 · 五条验证（逐条跑，别只看版本号）：\n"))
 const name = pkg.name
+console.log("  ⓪ node scripts/check-maintenance.mjs      # 维护状态一致？")
 console.log(`  ① npm view ${name} version                 # 已是 ${version}？`)
 console.log(`  ② curl -s $(npm view ${name}@${version} dist.tarball) | tar -xzOf - package/CHANGELOG.md | head -5`)
 console.log(`     # 要看到新内容，不只看版本号`)
@@ -381,9 +401,9 @@ console.log(`     # 200 且 "draft": false`)
 console.log()
 console.log(
   C.dim(
-    "没过这四条，不要说「已发布」。detail: https://github.com/MYCF711/magpie-plugin-scaffold/blob/main/UPDATING.md\n",
+    "没过这五条，不要说「已发布」。detail: https://github.com/MYCF711/magpie-plugin-scaffold/blob/main/UPDATING.md\n",
   ),
 )
 
-const failed = !pushed || !tagged || (ALSO_NPM && !published)
+const failed = !tagged || (ALSO_NPM && !published)
 process.exit(failed ? 1 : 0)

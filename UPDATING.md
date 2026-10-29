@@ -4,16 +4,18 @@
 > 首次发布（`npm publish` + 进市场）见 [README](./README.md) 的「怎么发布」——
 > 这一份只管**之后每一次**。
 
-发出去就不管，用户永远停在第一个版本。所以这份和「怎么发布」一样是**必读**的。
+## 铁律：默认分支只接受通过门禁的 PR
 
-## 不读这份的后果（真发生过）
+**不许直接 `git push origin main`，不许从没合并的功能分支打 tag / 发 npm。**
+唯一路径是：功能分支 → 本地检查 → PR → CI 全绿 → 合并 → 从已合并的默认分支发布。
 
-`git push origin main` 跑完、`git status` 干净、代码确实在远端 —— 看起来发完了。
-实际上 npm 上还是旧版本，GitHub 仓库右侧一直写着「暂无发布版本」。
-**没有任何一条命令会报错**，只有用户那边永远没动静。
+原因很直接：git 源用户会跟随默认分支 HEAD，npm 源用户会跟随 registry 新版本。
+绕过 PR 直接把坏提交推上去，等于把故障分发给所有正在用的人。
 
-发版是**七步**：写 CHANGELOG → bump → `npm pack --dry-run` → 提交 → push →
-`npm publish` → tag + Release → 五条验证。**push 是第 4 步。**
+这不是自己发明的流程。[GitHub 的 protected branches](https://docs.github.com/en/repositories/configuring-branches-and-merges-in-your-repository/managing-protected-branches/about-protected-branches)
+用「必需 PR + 必需状态检查 + 分支必须最新 + 管理员同样受限」强制执行；
+[release-please](https://github.com/googleapis/release-please) 进一步把版本号与 CHANGELOG 也做成 Release PR。
+本仓库保留现有 `release.mjs`，不引入另一套机器人，但采用同一道门：**先审一个可验证的 PR，再发布合并结果。**
 
 逐条勾 [CHECKLIST.md](./CHECKLIST.md) 的 B 表，别凭记忆。
 
@@ -36,106 +38,125 @@
 
 ⇒ 两条硬推论：
 
-1. **git 源必须推到默认分支（`main`）。** 推别的分支 HEAD 不变，magpie 永远认为没更新。
-2. **npm 源必须 bump `version` 再 `npm publish`。** 不 bump 就检测不到。
+1. **git 源最终必须落到默认分支（`main`），但只能经 PR 合并。** 功能分支本身不会触发用户更新。
+2. **npm 源必须 bump `version` 再 `npm publish`。** 不 bump 就检测不到；发布输入必须是 PR 合并后的提交。
 
-> **只走 git 源也可以。** 不发 npm 的插件（比如这个模板仓库自己），就只有「push 默认分支」
-> 这半条路 —— npm 那张表不适用。少一个发布口，少一处出错。
+> **只走 git 源也可以。** 不发 npm 的插件，就只有「PR 合进默认分支」这半条路 ——
+> npm 那张表不适用。少一个发布口，少一处出错。
 
 ---
 
 ## 二、发一个版本：照这个顺序
 
-### 第 0 步 · 先写更新内容
-
-见下面的「四、更新内容怎么写」。**不是发完再补** —— 写的时候才发现某条改动
-说不清楚，往往说明那个改动本来就有问题。
-
-### 第 1 步 · bump `version`
+### 第 0 步 · 从最新默认分支起功能分支
 
 ```bash
-# package.json 的 version
+git switch main
+git pull --ff-only origin main
+git switch -c feat/<这次改动>
+```
+
+**直接停在 `main` 上提交也不行。** 一旦养成这个习惯，下一步就会变回直接推坏包。
+
+### 第 1 步 · 写 CHANGELOG + bump `version`
+
+见下面的「四、更新内容怎么写」。**不是发完再补**。
+
+```bash
 npm version patch --no-git-tag-version     # 0.1.7 → 0.1.8；minor/major 同理
 ```
 
 ⚠ 改了包名的话，三处必须同步（缺一个静默错位）：
-`package.json` 的 `name`、`registry-entry.json` 的 `package`（**一字不差**；已经上了 registry
-的话那边也要跟着改）、`README` 里的安装命令。
+`package.json` 的 `name`、`registry-entry.json` 的 `package`、README 里的安装命令。
 
-### 第 2 步 · 本地验证打包内容
+### 第 2 步 · 本地检查，测试不是可选项
 
 ```bash
-npm pack --dry-run          # 看清单：README、CHANGELOG、docs 都在里面吗
+node scripts/check.mjs       # 派生仓库若没有自己的，就跑脚手架那份并指向当前仓库
+npm test                     # 没有 test 脚本时，运行仓库实际的 tests/*.test.mjs / smoke 测试
+npm pack --dry-run           # README、CHANGELOG、docs 都在包里吗
 ```
 
-### 第 3 步 · 提交
+任何一条失败就留在功能分支修，**不许靠 `|| true` 把红色检查抹成绿色**。
+
+### 第 3 步 · 提交并推功能分支
 
 一条 commit 一件事，message 用 `<范围>: <小写句子>`：
 
-```
-models: the context was 1M, not 128K
-readme: rewrite the front page on the template shape
+```bash
+git add -A
+git commit -m "models: correct the measured context window"
+git push -u origin feat/<这次改动>
 ```
 
-### 第 4 步 · 推到默认分支
+### 第 4 步 · PR 全绿后合并
 
 ```bash
-git push origin main
+gh pr create --base main --fill
+gh pr checks --watch
+# 确认检查全绿之后，再在 GitHub 上合并（或 gh pr merge --squash）
 ```
 
-⚠ **必须是默认分支。** git 源的更新检测看的就是它的 HEAD。
+合并前必须同时满足：PR 指向默认分支、必需检查 `rules` 成功、分支已跟上最新默认分支、讨论已解决。
+**本地测试绿不替代 PR 检查绿。** 合并后用户才能看到新的默认分支 HEAD。
 
-### 第 5 步 · 发 npm
+仓库设置必须是：
+
+| 设置 | 值 |
+|---|---|
+| Require a pull request before merging | 开；单人仓库的 required approvals 可为 0，但 PR 本身不可省 |
+| Require status checks to pass | 开，必需检查 = `rules` |
+| Require branches to be up to date | 开 |
+| Require conversation resolution | 开 |
+| Do not allow bypassing settings / enforce admins | 开 |
+| Force pushes / deletions | 都关 |
+
+### 第 5 步 · 回到已合并的默认分支，再发 npm
 
 ```bash
-npm publish
+git switch main
+git pull --ff-only origin main
+node scripts/release.mjs              # 预演；HEAD 必须和 origin/main 完全一致
+node scripts/release.mjs --yes --npm  # 真做；有 publish:npm 脚本会自动用它
 ```
 
-⚠ 同版本号重复 publish 会被拒；改了代码必须 bump（见第 1 步）。
-⚠ **包内 `name` 与 npm 包名不同的话**（就是「git 源想要大写标题、npm 又要能发」那种），
-裸跑会被 registry 拒 —— 那种插件走 `npm run publish:npm`。
+`release.mjs` **不再执行 `git push origin main`**。本地领先远端一个提交都会拒绝；
+它还会在任何远端副作用之前重跑合规检查、测试和 `npm pack --dry-run`。
 
-### 第 6 步 · 在 GitHub 上发 Release
+⚠ 同版本号重复 publish 会被拒；改了代码必须 bump。
+⚠ 包内 `name` 与 npm 包名不同的插件走 `npm run publish:npm`，裸 `npm publish` 会被拒。
 
-**这一步是给人看的，不是给 magpie 看的**（原因见下面的 ⚠）——
-但不做，用户就没有一个地方能一眼看出「这个版本改了什么」。
+### 第 6 步 · tag + GitHub Release
 
-**三条路，按省事程度挑一条：**
+**这一步是给人看的，不是给 magpie 看的**，但用户需要它确认「这一版改了什么」。
 
 | 路 | 怎么做 | 适合 |
 |---|---|---|
-| **`node scripts/release.mjs --yes`** | 模板自带。体检六项（版本 / CHANGELOG / 干净 / 分支 / 落后 / tag 被占）→ push → tag → 建 Release，第 7 步的五条验证也一并打印出来 | **默认走这条**。没有 token 也能建 tag，只是 Release 要手工补 |
-| 有 `release.yml` | 推 `v*` tag，workflow 用仓库自己的 token 把 CHANGELOG 对应那段抽出来建 Release | 想让 CI 长期接管（见下「什么时候该有 workflow」） |
-| 手工 | 网页 Draft a new release，正文把 CHANGELOG 那段粘过去 | 一次性仓库、没装 node |
+| **`node scripts/release.mjs --yes [--npm]`** | 校验已合并 HEAD、版本、CHANGELOG、干净工作区、检查与测试、tag 未占用 → 只推 tag → 建 Release | 默认 |
+| 有 `release.yml` | 推 `v*` tag；workflow 再验一次「tag 对应版本、提交已进默认分支、测试与 pack 全绿」 | CI 长期接管 |
+| 手工 | 网页 Draft a new release，正文把 CHANGELOG 那段粘过去 | 一次性仓库；仍只能选已合并提交 |
 
-```bash
-node scripts/release.mjs              # 预演：只体检 + 打印计划，什么都不改
-node scripts/release.mjs --yes        # 真做：push + tag + Release
-node scripts/release.mjs --yes --npm  # 再加 npm publish（有 publish:npm 脚本就用它）
-```
+它**故意不帮你做**第 0~4 步：分支、PR 和合并必须先在 GitHub 上完成。
 
-它**故意不帮你做**第 0~3 步（写 CHANGELOG / bump / pack 预演 / 提交）：
-那四步要人判断，而且体检会把它们当输入检查 —— 没写就过不了。
+#### workflow 是发布门禁，不只是省事工具
 
-#### 什么时候该有 workflow
-
-实测本机四个插件仓库：只有模板仓库自己有 `release.yml`，另外三个都没有，
-于是每次发版都得手工 `POST /releases`。判据很简单：
-
-- **发版频率 ≥ 每个月一次**，或者**不止一个人发版** → 加 `release.yml`
-- 只自己用、几个月才发一次 → 用 `release.mjs` 就够，少一个 CI 面少一处出错
+仍在维护的仓库默认带 `ci.yml` 与 `release.yml`：前者拦 PR，后者拦不符合发布条件的 tag。
+只有明确归档、不再向用户分发的仓库才不必补。
 
 #### 有 workflow 的话：推个 tag 就完事
 
-本模板带了 [`.github/workflows/release.yml`](./.github/workflows/release.yml)：
-推一个 `v*` tag，它就用仓库自己的 token 把 `CHANGELOG.md` 里该版本那几条抽出来建成
-Release。**正文只有一处来源**，不会和 CHANGELOG 打架。
+本模板带了 [`.github/workflows/release.yml`](./.github/workflows/release.yml)。
+推一个 `v*` tag 后，它先验证：tag 与 `package.json` 版本一致、tag 提交是默认分支祖先、
+合规检查 / 语义测试 / pack 预演全过。任一不符就停止，**不会建 Release，也不会发 npm**。
+全部通过后才从 `CHANGELOG.md` 抽正文建 Release。
 
 ```bash
 git tag v0.1.8 && git push origin v0.1.8
 ```
 
-⚠ 这个 workflow 只建 Release —— 它**不碰 npm，也不替你 push 分支**。
+⚠ workflow **不会替你合并 PR 或推默认分支**。配置了 `NPM_TOKEN` 时它会在 Release 成功后发 npm；
+没配置则明确跳过 npm，git 源与 Release 不受影响。需要免长期 token 时，可按
+[npm Trusted Publishing](https://docs.npmjs.com/trusted-publishers/) 绑定这个 `release.yml` 与 OIDC。
 
 ⚠⚠ **别用「删 tag 再重推」来刷新正文。** 删 tag 并不会删掉 Release —— GitHub 把它
 **转成草稿（`draft: true`）**。草稿在网页和匿名 API 上都看不见（`releases/tags/<tag>` 直接
@@ -437,10 +458,12 @@ README 里只留路标 —— 别把 changelog 抄一遍进 README，那是两�
 ## 五、发版前检查清单
 
 ```
+□ 从最新 main 起了功能分支，没有在 main 上直接提交 / 推送
 □ CHANGELOG 里这个版本那几条写好了（一条一行，说人话）
 □ version 已经 bump（npm 源检测就看它）
-□ npm pack --dry-run 清单对（README / CHANGELOG / docs 都在）
-□ 推到默认分支了（git 源检测看的是它的 HEAD）
+□ 合规检查、语义测试、npm pack --dry-run 全过，没有用 || true 掩盖失败
+□ 推的是功能分支；PR 的 rules 检查全绿后才合并进默认分支
+□ 本地 main 与 origin/main 完全一致，release.mjs 预演通过
 □ npm publish 成功（显示名与包名不同的插件：`npm run publish:npm`）
 □ GitHub Release 发了：tag `v<version>`，说明里一条条列了这次的更新
 □ npm view <包名> version 已是新版本
