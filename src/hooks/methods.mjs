@@ -199,29 +199,40 @@ export function makeMethods(c) {
         }
 
         try {
-          // OAuth 授权页是 302 → /login，headless 首屏可能还没渲染完；
-          // 这里等到手机号输入框真正出现，而不是固定 sleep 800ms 后硬填。
-          let phoneReady = false
+          // OAuth 授权页是 302 → /login，页面可能在「短暂出现输入框 → 再跳一次」之间切换。
+          // 所以这里不是「看到一次就填」，而是每次填完再确认一次；页面换了就重来。
+          let filled = ""
           for (let i = 0; i < 30; i++) {
             let state = ""
             try {
-              state = await evalInPage(session, `JSON.stringify({ phone: !!document.querySelector('#phone-number'), tab: [...document.querySelectorAll('button')].some(x => x.innerText.trim() === '手机号'), text: document.body.innerText.slice(0, 120) })`)
+              state = await evalInPage(session, `JSON.stringify({ phone: !!document.querySelector('#phone-number'), tab: [...document.querySelectorAll('button')].some(x => x.innerText.trim() === '手机号'), text: document.body.innerText.slice(0, 160), url: location.href })`)
             } catch {}
             if (state) {
-              try {
-                const o = JSON.parse(state)
-                if (o.phone) { phoneReady = true; break }
+              let o = null
+              try { o = JSON.parse(state) } catch {}
+              if (o) {
                 if (o.text.includes("无效的重定向地址")) throw new Error("OAuth 授权页提示：无效的重定向地址")
-                if (o.tab) await evalInPage(session, `(() => { const t=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='手机号'); t && t.click(); return 'ok' })()`).catch(() => {})
-              } catch (e) {
-                if (String(e.message).includes("无效的重定向地址")) throw e
+                if (!o.phone) {
+                  if (o.tab) await evalInPage(session, `(() => { const t=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='手机号'); t && t.click(); return 'ok' })()`).catch(() => {})
+                } else {
+                  // 等 300ms 再填：页面这期间若发生跳转，下一轮会重新找到输入框
+                  await sleep(300)
+                  try {
+                    const f = await evalInPage(session, fillFormExpr(phone, inviteCode, group))
+                    if (f) {
+                      const x = JSON.parse(f)
+                      if (x.phone) { filled = f; break }
+                    }
+                  } catch {}
+                }
               }
             }
             await sleep(500)
           }
-          if (!phoneReady) throw new Error("登录页没找到手机号输入框（OAuth 授权页可能没加载完）")
-          const filled = await evalInPage(session, fillFormExpr(phone, inviteCode, group))
-          if (!filled || !JSON.parse(filled).phone) throw new Error("登录页没找到手机号输入框")
+          if (!filled) {
+            const where = await evalInPage(session, "location.href").catch(() => "?")
+            throw new Error(`登录页没找到手机号输入框（页面：${String(where).slice(0, 120)}）`)
+          }
           await sleep(250)
           await evalInPage(session, clickSendExpr())
           await sleep(600)
