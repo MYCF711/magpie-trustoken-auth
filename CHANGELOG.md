@@ -1,3 +1,8 @@
+## 0.2.4
+
+- fix: header 注入脚本里 `/\/api\/user\//` 正则被模板字符串吃掉转义，页面抛 `SyntaxError: Unexpected token 'for'`，导致每轮填充都失败、最终误报“没找到手机号输入框”。
+- test: 本地实际跑通 authorize，返回“验证码已发送到 199****0000”。
+
 ## 0.2.3
 
 - fix: 不再打开 `/api/oauth/authorize`（它会 302 到 `/login`，headless 下输入框时有时无）；直接打开带 OAuth 参数的 `/login`，保留 PKCE/redirect_uri，登录后由 `window.aipy` 接管跳转。
