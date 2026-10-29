@@ -37,7 +37,7 @@ function headerHookCode(group) {
         XMLHttpRequest.prototype.open = function (m, u) { this.__aipyUrl = String(u); return __open.apply(this, arguments); };
         XMLHttpRequest.prototype.send = function () {
           try {
-            if (/\/api\/user\//.test(this.__aipyUrl || "")) {
+            if (/\\/api\\/user\\//.test(this.__aipyUrl || "")) {
               for (const [k, v] of Object.entries(__h)) if (v) this.setRequestHeader(k, v);
             }
           } catch {}
@@ -47,7 +47,7 @@ function headerHookCode(group) {
         window.fetch = async function (...a) {
           try {
             const u = typeof a[0] === "string" ? a[0] : (a[0] && a[0].url) || "";
-            if (/\/api\/user\//.test(u)) {
+            if (/\\/api\\/user\\//.test(u)) {
               const init = a[1] || {};
               const hd = new Headers(init.headers || {});
               for (const [k, v] of Object.entries(__h)) if (v) hd.set(k, v);
@@ -202,6 +202,7 @@ export function makeMethods(c) {
           // OAuth 授权页是 302 → /login，页面可能在「短暂出现输入框 → 再跳一次」之间切换。
           // 所以这里不是「看到一次就填」，而是每次填完再确认一次；页面换了就重来。
           let filled = ""
+          let fillError = ""
           for (let i = 0; i < 30; i++) {
             let state = ""
             try {
@@ -223,7 +224,7 @@ export function makeMethods(c) {
                       const x = JSON.parse(f)
                       if (x.phone) { filled = f; break }
                     }
-                  } catch {}
+                  } catch (e) { fillError = String(e?.message ?? e) }
                 }
               }
             }
@@ -231,7 +232,9 @@ export function makeMethods(c) {
           }
           if (!filled) {
             const where = await evalInPage(session, "location.href").catch(() => "?")
-            throw new Error(`登录页没找到手机号输入框（页面：${String(where).slice(0, 120)}）`)
+            const body = await evalInPage(session, "document.body.innerText").catch(() => "")
+            const inputs = await evalInPage(session, `JSON.stringify([...document.querySelectorAll('input')].map(i => ({ id: i.id, ph: i.placeholder, type: i.type })))`).catch(() => "[]")
+            throw new Error(`登录页没找到手机号输入框（页面：${String(where).slice(0, 100)}；正文：${String(body).replace(/\s+/g, " ").slice(0, 160)}；输入框：${String(inputs).slice(0, 200)}；填充错误：${String(fillError).slice(0, 200)}）`)
           }
           await sleep(250)
           await evalInPage(session, clickSendExpr())

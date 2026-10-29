@@ -503,7 +503,10 @@ async function evaluate(port, hostFragment, expression, timeoutMs = 8000) {
         }),
       )
     })
-    if (reply?.exceptionDetails) return ""
+    if (reply?.exceptionDetails) {
+      const d = reply.exceptionDetails.exception?.description || reply.exceptionDetails.text || "页面脚本异常"
+      throw new Error("页面执行异常：" + String(d).slice(0, 300))
+    }
     return reply?.result?.value ?? ""
   } finally {
     try {
