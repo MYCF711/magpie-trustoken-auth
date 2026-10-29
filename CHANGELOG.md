@@ -1,3 +1,7 @@
+## 0.2.3
+
+- fix: 不再打开 `/api/oauth/authorize`（它会 302 到 `/login`，headless 下输入框时有时无）；直接打开带 OAuth 参数的 `/login`，保留 PKCE/redirect_uri，登录后由 `window.aipy` 接管跳转。
+
 ## 0.2.2
 
 - fix: OAuth 登录页 302/刷新时手机号输入框会短暂出现又消失；填充改为「填完再确认」，页面换了就重新找，不再一次失败就报“登录页没找到手机号输入框”。
