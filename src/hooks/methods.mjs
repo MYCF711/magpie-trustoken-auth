@@ -179,7 +179,7 @@ export function makeMethods(c) {
         const inviteCode = inviteToUse()
         const group = pickGroup()
         const { verifier, challenge } = makePkce()
-        const authUrl = new URL(`${c.WEB}/api/oauth/authorize`)
+        const authUrl = new URL(`${c.WEB}/login`)
         authUrl.search = new URLSearchParams({
           code_challenge: challenge,
           code_challenge_method: "S256",
