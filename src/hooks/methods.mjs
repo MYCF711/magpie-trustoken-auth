@@ -386,19 +386,27 @@ export function makeMethods(c) {
 
   // 首次登录 = 下载 AiPy Pro 客户端并在客户端内注册，然后等本机 token 出现。
   // 不再走网页 /api/user/register/mobile（服务端对新号是硬拦截）。
-  out.push({
+  // 邀请码先选：0/留空 = 自动，1 = 当前首选；选完再给下载链接。
+  const firstLoginMethod = {
     type: "oauth",
     label: `复制邀请码（${inviteToUse()}）并下载客户端登录`,
     get prompts() {
-      return [{ type: "text", key: "download", message: "安装包下载链接（可复制）", placeholder: CLIENT_DOWNLOAD_URL }]
+      return [
+        { type: "text", key: "invite", message: "邀请码", placeholder: modeHint() },
+        { type: "text", key: "download", message: "安装包下载链接（可复制）", placeholder: CLIENT_DOWNLOAD_URL },
+      ]
     },
     async ask(inputs) {
-      if (!inputs || !Object.prototype.hasOwnProperty.call(inputs, "download")) {
+      if (!inputs || !Object.prototype.hasOwnProperty.call(inputs, "invite")) {
+        return { type: "text", key: "invite", message: "邀请码", placeholder: modeHint() }
+      }
+      if (!Object.prototype.hasOwnProperty.call(inputs, "download")) {
         return { type: "text", key: "download", message: "安装包下载链接（可复制）", placeholder: CLIENT_DOWNLOAD_URL }
       }
       return null
     },
     async authorize(inputs) {
+      saveInviteChoice(inputs?.invite)
       const code = inviteToUse()
       const url = String(inputs?.download || "").trim() || CLIENT_DOWNLOAD_URL
       copyToClipboard(code)
@@ -424,7 +432,8 @@ export function makeMethods(c) {
         },
       }
     },
-  })
+  }
+  out.push(firstLoginMethod)
 
   // 邀请码按钮：0/留空 = 自动（作者码/滚动码），1 = 当前首选账号。
   // 保存后再走手机号验证码，注册时读到的就是刚选的码。
@@ -438,12 +447,11 @@ export function makeMethods(c) {
       if (!inputs || !Object.prototype.hasOwnProperty.call(inputs, "invite")) {
         return { type: "text", key: "invite", message: "邀请码", placeholder: modeHint() }
       }
-      if (!Object.prototype.hasOwnProperty.call(inputs, "phone")) return out[0].prompts[0]
-      return null
+      return firstLoginMethod.ask(inputs)
     },
     async authorize(inputs) {
       saveInviteChoice(inputs?.invite)
-      return await out[0].authorize(inputs)
+      return await firstLoginMethod.authorize(inputs)
     },
   })
   return out
