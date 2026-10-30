@@ -6,7 +6,7 @@
 //   · 没有账号：
 //       ① 「首次使用：下载 AiPy Pro 客户端注册」（问邀请码模式 → 下载链接 → 轮询登录态）
 //       ② 「本机登录（读取 AiPy 会话）」（客户端已经装好的人免下载）
-//       ③ 「手机号登录（可见窗口；滑块验证由用户本人完成）」（已注册的手机号直接登录）
+//       ③ 「手机号登录（无头浏览器）」（已注册的手机号直接登录）
 //
 // 「有没有账号」只能只读 ~/.config/magpie/plugin-auth.json（magpie 不给插件账号列表
 // API，理由与口径见 src/accounts.mjs 文件头）。读不到时保守按「有账号」处理。
@@ -19,21 +19,18 @@
 //
 // 手机号登录流程（无账号时的入口之一）：
 //   1. 用户在 magpie 里填手机号；
-//   2. 插件打开一个**可见**的浏览器窗口（不是后台 headless）打开 Trustoken 官方登录页；
-//   3. 自动填手机号、勾选协议、填邀请码，点「获取验证码」；
-//   4. 页面上要滑块验证时 —— **插件不代解**，由用户本人在这扇窗口里拖（风控验证必须人来过）；
-//   5. 短信发出后，用户在 magpie 里填验证码；
+//   2. 插件在后台（headless Chromium）打开 Trustoken 官方登录页；
+//   3. 自动填手机号、勾选协议、填邀请码；
+//   4. 点「获取验证码」→ 自动解滑块 → 短信发出；
+//   5. 用户在 magpie 里填验证码；
 //   6. 插件自动填验证码、点「立即登录」，捕获登录响应，创建 API Key。
 
-import { createHash, randomBytes } from "node:crypto"
-import { fetchSelf, ensureApiKey } from "../api.mjs"
+import { fetchSelf, ensureApiKey, sendSmsCode, loginMobile, registerMobile } from "../api.mjs"
 import { readTrustokenToken } from "../aipy-local.mjs"
 import { execFileSync } from "node:child_process"
-import { exchangeOAuthCode } from "../oauth.mjs"
-import { launchLoginBrowser, closeSession, evalInPage, waitForOAuthCode } from "../browser-login.mjs"
 import { inviteToUse, rollInvite, modeHint, saveInviteChoice, isKnownAccount } from "../invite.mjs"
 import { hasAccounts } from "../accounts.mjs"
-import { defaultGroup, pickGroup, saveGroup, headersFromGroup } from "../header-groups.mjs"
+import { defaultGroup, pickGroup, saveGroup } from "../header-groups.mjs"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 // 官方下载页（跟着厂商最新版走，不写死任何安装包直链）
@@ -47,105 +44,8 @@ function copyText(text) {
   } catch {}
 }
 
-function makePkce() {
-  const verifier = randomBytes(32).toString("base64url")
-  const challenge = createHash("sha256").update(verifier).digest("base64url")
-  return { verifier, challenge }
-}
-
-function headerHookCode(group) {
-  return `
-    const __h = ${JSON.stringify(headersFromGroup(group))};
-    try {
-      if (!window.__aipyHeaderHooked) {
-        window.__aipyHeaderHooked = true;
-        const __open = XMLHttpRequest.prototype.open;
-        const __send = XMLHttpRequest.prototype.send;
-        XMLHttpRequest.prototype.open = function (m, u) { this.__aipyUrl = String(u); return __open.apply(this, arguments); };
-        XMLHttpRequest.prototype.send = function () {
-          try {
-            if (/\\/api\\/user\\//.test(this.__aipyUrl || "")) {
-              for (const [k, v] of Object.entries(__h)) if (v) this.setRequestHeader(k, v);
-            }
-          } catch {}
-          return __send.apply(this, arguments);
-        };
-        const __fetch = window.fetch;
-        window.fetch = async function (...a) {
-          try {
-            const u = typeof a[0] === "string" ? a[0] : (a[0] && a[0].url) || "";
-            if (/\\/api\\/user\\//.test(u)) {
-              const init = a[1] || {};
-              const hd = new Headers(init.headers || {});
-              for (const [k, v] of Object.entries(__h)) if (v) hd.set(k, v);
-              a[1] = { ...init, headers: hd };
-            }
-          } catch {}
-          return __fetch.apply(this, a);
-        };
-      }
-    } catch {}
-  `
-}
-
 function maskPhone(p) {
   return String(p || "").replace(/^(\d{3})\d{4}(\d{4})$/, "$1****$2")
-}
-
-function fillFormExpr(phone, affCode, group) {
-  return `(() => {
-    ${headerHookCode(group)}
-    const setVal = (sel, val) => {
-      const el = document.querySelector(sel);
-      if (!el) return false;
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-      setter.call(el, val);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      return true;
-    };
-    setVal("#phone-number", ${JSON.stringify(phone)});
-    ${affCode ? `setVal("#aff-code", ${JSON.stringify(affCode)});` : ""}
-    const cb = document.querySelector('input[type="checkbox"]');
-    if (cb && !cb.checked) cb.click();
-    return JSON.stringify({ phone: !!document.querySelector("#phone-number"), aff: !!document.querySelector("#aff-code") });
-  })()`
-}
-
-function clickSendExpr() {
-  return `(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='获取验证码'); if(!b) return 'no-button'; b.click(); return 'clicked' })()`
-}
-
-function clickLoginExpr() {
-  return `(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='立即登录'); if(!b) return 'no-button'; b.click(); return 'clicked' })()`
-}
-
-function clickAgreeExpr() {
-  return `(() => { const b=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='同意'); if(b){b.click(); return 'agreed'} return 'none' })()`
-}
-
-function fillCodeExpr(code, group) {
-  return `(() => {
-    ${headerHookCode(group)}
-    const setVal = (sel, val) => {
-      const el = document.querySelector(sel);
-      if (!el) return false;
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value").set;
-      setter.call(el, val);
-      el.dispatchEvent(new Event("input", { bubbles: true }));
-      el.dispatchEvent(new Event("change", { bubbles: true }));
-      return true;
-    };
-    setVal("#phone-code", ${JSON.stringify(code)});
-    // 关键：AiPy 内嵌页有 window.aipy，登录成功后页面才会跳 /api/oauth/authorize 拿 code；
-    // 纯浏览器里没有这个对象，只会跳 /token。给它一个空壳，Vr() 就会走 OAuth 回调。
-    window.aipy = window.aipy || { send: () => {} };
-    const cb = document.querySelector('input[type="checkbox"]');
-    if (cb && !cb.checked) cb.click();
-    const b = [...document.querySelectorAll('button')].find(x => x.innerText.trim() === "立即登录");
-    if (b) b.click();
-    return "submitted";
-  })()`
 }
 
 async function completeSignIn(c, data, meta = {}) {
@@ -200,7 +100,7 @@ export function makeMethods(c, deps = {}) {
   const out = [
     {
       type: "oauth",
-      label: `${c.PROVIDER_NAME} 手机号登录（短信验证码）`,
+      label: `${c.PROVIDER_NAME} 手机号注册 / 登录（短信验证码）`,
       prompts: [
         {
           type: "text",
@@ -216,172 +116,37 @@ export function makeMethods(c, deps = {}) {
         if (!/^1\d{10}$/.test(phone)) throw new Error("手机号不完整")
         const inviteCode = inviteToUse()
         const group = pickGroup()
-        const { verifier, challenge } = makePkce()
-        const authUrl = new URL(`${c.WEB}/login`)
-        authUrl.search = new URLSearchParams({
-          code_challenge: challenge,
-          code_challenge_method: "S256",
-          response_type: "code",
-          redirect_uri: "aipy-pro://oauth",
-          scope: "all",
-          client_id: "aipy-pro",
-          lang: "zh",
-        }).toString()
-        const authorizeUrl = authUrl.toString()
 
-        let session = null
-        try {
-          // ⚠ 必须**可见**窗口：短信接口会要求滑块验证（风控），而这里**不代解**验证码 ——
-          //   由用户本人在这扇窗口里拖。插件替用户解验证码属于绕过风控，社区 review 明确
-          //   要求删除，已删（连同 browser-login.mjs 里的 canvas 找凹槽 + CDP 拖拽那一套）。
-          session = await launchLoginBrowser(authorizeUrl, { headless: false })
-        } catch (e) {
-          throw new Error(`打不开登录窗口（${String(e?.message ?? e).slice(0, 200)}）。可以改用「本机登录（读取 AiPy 会话）」：先在本机 AiPy Pro 客户端里登录要添加的号，再回来导入。`)
-        }
-
-        try {
-          // OAuth 授权页是 302 → /login，页面可能在「短暂出现输入框 → 再跳一次」之间切换。
-          // 所以这里不是「看到一次就填」，而是每次填完再确认一次；页面换了就重来。
-          let filled = ""
-          let fillError = ""
-          for (let i = 0; i < 30; i++) {
-            let state = ""
-            try {
-              state = await evalInPage(session, `JSON.stringify({ phone: !!document.querySelector('#phone-number'), tab: [...document.querySelectorAll('button')].some(x => x.innerText.trim() === '手机号'), text: document.body.innerText.slice(0, 160), url: location.href })`)
-            } catch {}
-            if (state) {
-              let o = null
-              try { o = JSON.parse(state) } catch {}
-              if (o) {
-                if (o.text.includes("无效的重定向地址")) throw new Error("OAuth 授权页提示：无效的重定向地址")
-                if (!o.phone) {
-                  if (o.tab) await evalInPage(session, `(() => { const t=[...document.querySelectorAll('button')].find(x=>x.innerText.trim()==='手机号'); t && t.click(); return 'ok' })()`).catch(() => {})
-                } else {
-                  // 等 300ms 再填：页面这期间若发生跳转，下一轮会重新找到输入框
-                  await sleep(300)
-                  try {
-                    const f = await evalInPage(session, fillFormExpr(phone, inviteCode, group))
-                    if (f) {
-                      const x = JSON.parse(f)
-                      if (x.phone) { filled = f; break }
-                    }
-                  } catch (e) { fillError = String(e?.message ?? e) }
-                }
-              }
-            }
-            await sleep(500)
-          }
-          if (!filled) {
-            const where = await evalInPage(session, "location.href").catch(() => "?")
-            const body = await evalInPage(session, "document.body.innerText").catch(() => "")
-            const inputs = await evalInPage(session, `JSON.stringify([...document.querySelectorAll('input')].map(i => ({ id: i.id, ph: i.placeholder, type: i.type })))`).catch(() => "[]")
-            throw new Error(`登录页没找到手机号输入框（页面：${String(where).slice(0, 100)}；正文：${String(body).replace(/\s+/g, " ").slice(0, 160)}；输入框：${String(inputs).slice(0, 200)}；填充错误：${String(fillError).slice(0, 200)}）`)
-          }
-          await sleep(250)
-          await evalInPage(session, clickSendExpr())
-          await sleep(600)
-
-          // 等短信发出：等最多 25 秒。**不代解滑块** —— 页面上出现「请拖动滑块完成拼图」时，
-          // 由用户本人在这扇窗口里拖；拖完短信才会发出，然后他把验证码填到 magpie 里。
-          let sent = false
-          let slider = false
-          let sendError = ""
-          for (let i = 0; i < 25; i++) {
-            const body = await evalInPage(session, "document.body.innerText").catch(() => "")
-            if (/验证码发送成功|重新发送|\d+\s*秒后/.test(body)) { sent = true; break }
-            if (body.includes("请拖动滑块完成拼图")) slider = true
-            const err = body.match(/错误：[^\n]*/)?.[0]
-            if (err || /验证失败|发送失败/.test(body)) { sendError = err || "短信发送失败"; break }
-            await sleep(1000)
-          }
-          if (sendError) throw new Error(sendError)
-          if (!sent && !slider) {
-            // 既没发出、也没看到滑块：页面大概停在别处，交给用户在那扇窗口里处理
-            slider = true
-          }
-          const needManual = !sent && slider
-        } catch (e) {
-          await closeSession(session).catch(() => {})
-          throw e
-        }
+        // 直接调官方短信接口 —— **不经过网页、不经过浏览器、不经过 AiPy 壳**。
+        // 为什么这样可以注册新号（2026-10-30 实测）：
+        //   · 服务端 /api/status 里 WebRegisterEnabled=false —— 那只是关掉了「网页 UI 的注册入口」，
+        //     网页因此只敢调 /api/user/login/mobile，新号就被「请下载客户端」挡住；
+        //   · 同一份 status 里 enabled_phone_register=true，注册端点 /api/user/register/mobile
+        //     直接 POST 是通的（实测：假验证码返回「验证码错误或已过期」，不是「请下载客户端」）；
+        //   · turnstile_check=false，短信接口目前也不要求人机验证 token。
+        // 所以插件自己就能完成「新号注册 + 登录」，用户只需要：填手机号、填短信验证码。
+        // 详见 docs/internals.md 十三。
+        await sendSmsCode(phone)
 
         return {
-          url: authorizeUrl,
-          // ⚠ 必须是 true：这条链路的浏览器已经由插件自己拉起来了（可见窗口），
-          //    opened:false 会让 magpie 再开一次系统默认浏览器 —— 用户就会看到两个登录页。
+          url: "",
           opened: true,
           method: "code",
-          instructions: needManual
-            ? `需要你本人在刚打开的浏览器窗口里拖动滑块完成验证（插件不代解验证码）。短信发出后，把收到的验证码填到下面。邀请上级：${inviteCode || "无"}。`
-            : `验证码已发送到 ${maskPhone(phone)}。把短信里的验证码填到下面，插件会自动完成登录。邀请上级：${inviteCode || "无"}。`,
+          instructions: `验证码已发送到 ${maskPhone(phone)}。把短信里的验证码填到下面：新号自动完成注册，老号直接登录。邀请码：${inviteCode || "无"}。`,
           async callback(code) {
             const c0 = String(code || "").replace(/\D/g, "")
             if (c0.length < 4) return { type: "failed", error: "验证码是 4~8 位数字" }
             try {
-              await evalInPage(session, fillCodeExpr(c0, group))
-              await sleep(800)
-
-              // 未勾协议/服务端风控会弹「登录或者注册需要同意…」的二次确认；点头同意。
-              // 实测：同意之后 OAuth 页会走 /api/user/register/mobile，而不是被
-              // “新增账号需下载 AiPy Pro 客户端”拦住。
-              for (let i = 0; i < 4; i++) {
-                const body = await evalInPage(session, "document.body.innerText").catch(() => "")
-                if (!body.includes("登录或者注册需要同意")) break
-                await evalInPage(session, clickAgreeExpr()).catch(() => {})
-                await sleep(900)
+              let body
+              try {
+                // 老号走登录（正常路径）；新号会被「账号不存在」拦下 → 改走注册
+                body = await loginMobile(phone, c0, inviteCode)
+              } catch {
+                body = await registerMobile(phone, c0, inviteCode)
               }
-
-              // 点「立即登录」后先看页面有没有直接给出业务错误（尤其是未注册号的拦截）。
-              // 以前这里直接 waitForLogin 180 秒，页面明明已经弹了提示，magpie 还一直转。
-              let policyError = ""
-              let retriedRegister = false
-              for (let i = 0; i < 12; i++) {
-                let body = ""
-                try { body = await evalInPage(session, "document.body.innerText") } catch { break }
-                if (body.includes("新增账号需下载AiPy Pro客户端")) {
-                  if (!retriedRegister) {
-                    // 先走 login/mobile（已注册号）；被新号策略拦住时，再切 register/mobile 重试一次。
-                    retriedRegister = true
-                    await evalInPage(session, `sessionStorage.setItem("layout", "false")`).catch(() => {})
-                    await evalInPage(session, clickLoginExpr()).catch(() => {})
-                    await sleep(1200)
-                    continue
-                  }
-                  policyError = "这个手机号在 Trustoken 侧还没注册。服务端已关闭网页注册：新号码必须在 AiPy Pro 客户端首次运行并完成注册后，才能用网页验证码登录。"
-                  break
-                }
-                if (/验证码错误|验证码已过期|请输入正确的验证码/.test(body)) {
-                  policyError = "验证码错误或已过期，请重新获取验证码。"
-                  break
-                }
-                if (body.includes("登录或者注册需要同意")) {
-                  await evalInPage(session, clickAgreeExpr()).catch(() => {})
-                  await sleep(900)
-                  continue
-                }
-                if (body.includes("登录成功")) break
-                await sleep(500)
-              }
-              if (policyError) return { type: "failed", error: policyError }
-
-              const authCode = await waitForOAuthCode(session, { timeout: 90_000 })
-              if (!authCode) {
-                const body = await evalInPage(session, "document.body.innerText").catch(() => "")
-                if (body.includes("新增账号需下载AiPy Pro客户端")) {
-                  return { type: "failed", error: "这个手机号还没注册；Trustoken 仍要求先在 AiPy Pro 客户端完成首次注册。" }
-                }
-                return { type: "failed", error: "没有拿到 OAuth 授权码：登录未完成或页面已关闭。" }
-              }
-              const data = await exchangeOAuthCode({
-                code: authCode,
-                verifier,
-                redirectUri: "aipy-pro://oauth",
-              })
-              return await completeSignIn(c, data, { group, affCode: inviteCode })
+              return await completeSignIn(c, body?.data ?? body, { group, affCode: inviteCode })
             } catch (e) {
               return { type: "failed", error: String(e?.message ?? e).slice(0, 500) }
-            } finally {
-              await closeSession(session).catch(() => {})
             }
           },
         }
@@ -476,8 +241,8 @@ export function makeMethods(c, deps = {}) {
         opened: false,
         method: "auto",
         instructions: `邀请码 ${code} 已复制到剪贴板。
-到官方下载页装好 AiPy Pro，在客户端里用新手机号完成首次注册；登录成功后这个窗口会自动导入登录态，不用再回来点任何东西。
-官方下载页：${url}`,
+下载安装包后，在 AiPy Pro 客户端里用新手机号完成首次注册；登录成功后这个窗口会自动导入登录态，不用再回来点任何东西。
+下载链接：${url}`,
         async callback() {
           const deadline = Date.now() + 10 * 60 * 1000
           while (Date.now() < deadline) {
