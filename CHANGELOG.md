@@ -1,3 +1,9 @@
+## 0.3.2
+
+- fix: 上游用 400 报「渠道自己坏了」（`bad response status code 400`）时，magpie 的 `retryable()` 不认这句话 ⇒ 不换号、400 直接摔给客户端，整个会话被它打断。`auth.loader` 现在带一个 `fetch`，按语义把 400/422 翻译成 magpie 认得的状态码：钱（灵石/积分/点数/余额/额度/欠费/充值/insufficient balance…）→ **402**；渠道坏了（`bad response status code` / `bad_response_status_code` / 无可用渠道）→ **502**；模型不存在/未开通/无权 → **404**；400 里明说「每分钟/每秒」的限流 → **429**。上下文过长与请求格式错误（`invalid_text_request`）**原样放行** —— 换号一样失败，还会把「该压缩上下文」的信号弄丢。
+- fix: 只读 400/422 的响应体（且是 `clone()` 出来读的），其余状态码连 `clone()` 都不做、`Response` 原对象交回 —— 200 是 SSE 干流，读一下就废。不改请求体、不改 Authorization、不加头。
+- test: 新增 `tests/error-classify.mjs`（25 条，报文取 2026-10-30 对 `api.trustoken.cn` 的实测原文），锁死四档翻译 + 「非 400/422 的响应体一个字都不读」+ 「判类读过 clone 之后原 Response 仍完整」；`npm test` 现在把它一起跑。`tests/semantics.test.mjs` 另加 5 条（4 条翻译 + 1 条「装配出来的 loader 必须带 fetch」）。
+
 ## 0.3.1
 
 - feat: 首次登录下载按钮接入邀请码两种模式：先问 0/自动、1/首选，再给下载链接；选中的码复制到剪贴板。
