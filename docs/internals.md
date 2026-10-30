@@ -127,3 +127,60 @@ Content-Type: application/json
   - `~/.cache/magpie/trustoken-invite-policy.json` —— auto / fixed / custom
   - `~/.cache/magpie/trustoken-invite-codes.json` —— 见过哪些账号的码
 - 学超级麦吉 0.3.32：登录成功 / 每日签到调用 `rollInvite`；「邀请上级」用两个只设置入口（select / text），`authorize` 返回 `{type:"failed", error:"已保存…"}`，不会新增账号。
+
+## 10. 实测：上游 400 为什么打断会话，怎么修的（2026-10-30）
+
+### 10.1 现象与原始证据
+
+`~/.config/magpie/routing/2026-10-30.jsonl`（当天该账号这一路 **589 次 200 / 4 次 400**，4 次全在 01:31–01:41 的高并发时段）：
+
+```json
+{"id":"trustoken@181****6710","model":"deepseek-flash","effort":"max","done":true,"status":400,"ms":783,
+ "fail":"other",
+ "error":"Trustoken（AiPy）: bad response status code 400 (request id: 20261030013142252178529samnEl6F). 出错了！若无法解决，可加入官方群寻求帮助（ https://www.aipyaipy.com/about.html ）或者新建全新任务重试。"}
+```
+
+DSH 侧的同一个请求（`session.v4.jsonl.zstd`，zstd 多帧，要用流式解压才读得到）：
+
+```json
+{"type":"turn/end","data":{"turn":1,"reason":{"kind":"error","error":{
+  "message":"400: {\"code\":\"bad_response_status_code\",\"message\":\"Trustoken（AiPy）: bad response status code 400 (request id: …)\",\"param\":\"400\",\"type\":\"invalid_request_error\"}",
+  "code":"INVALID_REQUEST"}}}}
+```
+
+即：**这一轮就此结束**，同组其它账号一次都没被问。
+
+### 10.2 这条 400 是什么
+
+`bad response status code` 是 trustoken 的 new-api 在**渠道**（它背后的模型供应商）回了非 200 时给出的措辞 —— 是渠道侧的错，不是「额度不足」，也不是请求格式问题。同一个网关的三类 400 实测对照（`api.trustoken.cn/v1/chat/completions`，2026-10-30 16:39 本机实测原文）：
+
+| 触发 | HTTP | body（节选） |
+|---|---|---|
+| 请求体类型错（`temperature:"abc"`） | 400 | `{"error":{"code":"invalid_text_request","message":"json: cannot unmarshal string into Go struct field GeneralOpenAIRequest.temperature of type float64 (request id: …)…","type":"new_api_error"}}` |
+| `messages: []` | 400 | `{"error":{"code":"invalid_text_request","message":"field messages is required (request id: …)…"}}` |
+| 超频（并发探针打满 60 次/分钟） | 429 | `{"error":{"message":"您已达到总请求数限制：1分钟内最多请求60次，包括失败次数…","type":"new_api_error"}}` |
+
+**没能按需复现 `bad_response_status_code`**（如实记下这次的负结果）：直接对上游试过 `temperature/max_tokens/messages/stream_options/tools(strict, anyOf, items 嵌套, 缺 parameters)/role:tool 无对应 tool_calls/n:2/logprobs/空 messages/极大 max_tokens` 共 20 余种形态，不是 200 就是上表那两类 400；24 并发 × 3 轮探针只撞出 429。⇒ 那次 400 是**渠道侧的偶发失败**（当时每账号约 1 req/s ≈ 60 次/分，正卡在实测的每分钟上限上），不是请求形状问题，**因此本仓库不改请求体**（magicrew 的 `rewriteRequestBody` / `loosenItemsSchema` 在这里没有对应诱因）。
+
+### 10.3 magpie 为什么不换号（源码判据）
+
+本机 checkout `projects/magpie`（`v0.1.1775`；装入版 `0.1.2145`，两者的词表在 exe 里逐字对得上）：
+
+- `internal/gateway/fallback.go` `retryable()`（1383 行起）：`case 401,402,403,404,408,429, status >= 500 → true`；`case 400, 422` 只认 quotaWords / unservedWords / refusedWords / shapeWords / unsaidWords / regionWords / wrongEndpoint。
+- `internal/gateway/gateway.go`（≈3487 行）：只有 `!last && hw.failed()` 才 `continue` 到下一个候选；`holdWriter.failed()`（fallback.go 2461）就是 `retryable(hw.code(), hw.errBody())`。
+- `bad response status code 400` 命中不了 400 分支任何一组词 ⇒ 不换号；`failure()`（routing.go 365）落 failOther。
+- 5xx 与 402 走的是 `retryable` 的第一条分支（无条件 true）；`failure(402)` 落 failCredit（`restAfter`：30 分钟 + 记一笔「没钱」），5xx + 无钱的词落 failOther（`restAfter` 默认分支：`fallbackCooldown = 1 分钟` 起步的 backoff）。
+
+### 10.4 于是翻译（`src/status.mjs`）
+
+| 上游（400/422） | 翻成 | magpie 侧后果 |
+|---|---|---|
+| 钱不够（灵石/积分/点数/余额/额度/欠费/充值/insufficient balance…） | 402 | 换号 + 该号按「没钱」休息 30 分钟 |
+| 渠道自己坏了（`bad response status code` / 无可用渠道） | 502 | 换号 + 该号只进 1 分钟 backoff（不冤枉成欠费） |
+| 模型不存在/未开通/无权 | 404 | 换号；**绝不 401**（401 = 登录失效，整号被停） |
+| 400 里明说「每分钟/每秒」的限流 | 429 | 换号 + 按限流休息、退队尾 |
+| 上下文过长 / `invalid_text_request` 等请求本身的错 | 原样 | 交回 magpie：该压缩上下文就压缩，该报错就报错 |
+| 非 400/422 的任何响应 | 原样 | 连 `clone()` 都不做（200 是 SSE 干流） |
+
+⚠ **限流类不翻 402**：magpie 的 quotaWords 本来就认「限流/频率/rate limit/too many requests」，而 402 会被读成 failCredit（30 分钟）—— 把一次限流升级成「账户欠费半小时」是错的。上游把限流写成 400 且明说分钟窗口的，才翻 429。
+
