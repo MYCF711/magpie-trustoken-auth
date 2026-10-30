@@ -741,25 +741,13 @@ function findToken(o, depth = 0) {
 
 /**
  * 盯着登录窗口，直到拿到 access_token。
- * 登录页可能是手机号（滑块 + 短信）/ 微信 / 密码；用户操作完这里自动返回。
+ * 登录页可能是手机号（短信）/ 微信 / 密码；验证码由用户本人完成，这里只等结果。
  */
 export async function waitForLogin(session, { timeout = 300_000, interval = 1500 } = {}) {
   const deadline = Date.now() + timeout
   let last = null
   while (Date.now() < deadline) {
     try {
-      // 先看有没有滑块弹窗：有就自动解掉（和用户手拖完全同一套页面事件）
-      const sol = await solveSlider(session)
-      if (sol) {
-        const sig = String(sol.sig || "")
-        if (session.__lastCaptchaSig !== sig) {
-          session.__lastCaptchaSig = sig
-          try { await dragSlider(session, sol) } catch {}
-          await new Promise((r) => setTimeout(r, 1200))
-          continue
-        }
-      }
-
       await evalInPage(session, LOGIN_HOOK)
       const raw = await evalInPage(session, READ_LOGIN_STATE)
       if (raw) {
@@ -783,125 +771,6 @@ export async function waitForLogin(session, { timeout = 300_000, interval = 1500
     await new Promise((r) => setTimeout(r, interval))
   }
   return { token: null, last }
-}
-
-// ── 自动解滑块 ───────────────────────────────────────────────────────
-// 页面里用 canvas 读背景图/拼图块，按 alpha 蒙版找最暗的凹槽位置；
-// 再用 CDP Input 事件把滑块从起点拖到目标。完全不调用 /api/captcha/check，
-// 让页面自己的 React 组件去提交，逻辑与用户手拖完全一致。
-
-const SOLVE_SLIDER = `(() => {
-  const bgImg = [...document.images].find(i => i.src.startsWith("data:image/jpeg") && i.getBoundingClientRect().width > 250);
-  const tileImg = [...document.images].find(i => i.src.startsWith("data:image/png") && i.getBoundingClientRect().width < 100);
-  const handle = document.querySelector(".gocaptcha-module_dragBlock__bFlwx");
-  const track = document.querySelector(".gocaptcha-module_dragSlideBar__noauW");
-  if (!bgImg || !tileImg || !handle || !track) return "";
-  const br = bgImg.getBoundingClientRect();
-  const tr = tileImg.getBoundingClientRect();
-  const hr = handle.getBoundingClientRect();
-  const trk = track.getBoundingClientRect();
-  const bw = Math.round(br.width), bh = Math.round(br.height), tw = Math.round(tr.width), th = Math.round(tr.height);
-  if (!bw || !tw) return "";
-  const bc = document.createElement("canvas"); bc.width = bw; bc.height = bh;
-  const bctx = bc.getContext("2d"); bctx.drawImage(bgImg, 0, 0, bw, bh);
-  const bd = bctx.getImageData(0, 0, bw, bh).data;
-  const tc = document.createElement("canvas"); tc.width = tw; tc.height = th;
-  const tctx = tc.getContext("2d"); tctx.drawImage(tileImg, 0, 0, tw, th);
-  const td = tctx.getImageData(0, 0, tw, th).data;
-  const ty = Math.round(tr.top - br.top);
-  const gray = (d, w, h) => {
-    const g = new Float32Array(w * h);
-    for (let i = 0, j = 0; i < g.length; i++, j += 4) g[i] = 0.299 * d[j] + 0.587 * d[j + 1] + 0.114 * d[j + 2];
-    return g;
-  };
-  const grad = (g, w, h) => {
-    const o = new Float32Array(w * h);
-    for (let y = 1; y < h - 1; y++) for (let x = 1; x < w - 1; x++) {
-      const i = y * w + x;
-      const gx = g[i + 1] - g[i - 1], gy = g[i + w] - g[i - w];
-      o[i] = Math.sqrt(gx * gx + gy * gy);
-    }
-    return o;
-  };
-  const bEdge = grad(gray(bd, bw, bh), bw, bh);
-  const tEdge = grad(gray(td, tw, th), tw, th);
-  let best = null;
-  for (let x = 0; x <= bw - tw; x++) {
-    let n = 0, st = 0, sp = 0, stt = 0, spp = 0, stp = 0;
-    for (let yy = 1; yy < th - 1; yy++) {
-      for (let xx = 1; xx < tw - 1; xx++) {
-        const a = td[((yy * tw + xx) * 4) + 3];
-        if (a <= 128) continue;
-        const tv = tEdge[yy * tw + xx];
-        const pv = bEdge[(ty + yy) * bw + (x + xx)];
-        n++; st += tv; sp += pv; stt += tv * tv; spp += pv * pv; stp += tv * pv;
-      }
-    }
-    if (n < 50) continue;
-    const mt = st / n, mp = sp / n;
-    const vt = stt / n - mt * mt, vp = spp / n - mp * mp;
-    const cov = stp / n - mt * mp;
-    const den = Math.sqrt(vt * vp);
-    const score = den > 0 ? cov / den : -1;
-    if (!best || score > best.score) best = { score, x };
-  }
-  if (!best) return "";
-  const A = bw, P = Math.round(hr.width), M = Math.round(tr.left - br.left), W = tw;
-  const q = A - P;
-  const ie = q > 0 ? (A - (W + M)) / q : 1;
-  if (!ie || !Number.isFinite(ie)) return "";
-  const targetHandleLeft = trk.left + ((best.x - M) / ie);
-  return JSON.stringify({
-    sig: (bgImg.src || "").slice(30, 90) + "|" + (tileImg.src || "").slice(30, 90),
-    target: best.x,
-    score: best.score,
-    fromX: hr.left + hr.width / 2,
-    fromY: hr.top + hr.height / 2,
-    toX: targetHandleLeft + hr.width / 2,
-    toY: hr.top + hr.height / 2,
-  });
-})()`
-
-/** 通过 CDP 发一个 Input 事件 */
-async function cdpInput(session, params) {
-  const page = await pickLoginPage(session.port, "trustoken.cn")
-  if (!page) throw new Error("没有可用的页面 target")
-  const ws = new WebSocket(page.webSocketDebuggerUrl)
-  await new Promise((resolve, reject) => {
-    const t = setTimeout(() => reject(new Error("CDP 连接超时")), 5000)
-    ws.addEventListener("open", () => { clearTimeout(t); resolve() })
-    ws.addEventListener("error", (e) => { clearTimeout(t); reject(new Error("CDP 连接失败")); })
-  })
-  try {
-    await new Promise((resolve, reject) => {
-      const t = setTimeout(() => reject(new Error("CDP Input 超时")), 5000)
-      ws.addEventListener("message", (ev) => {
-        let msg; try { msg = JSON.parse(ev.data) } catch { return }
-        if (msg.id !== 2) return
-        clearTimeout(t); msg.error ? reject(new Error(msg.error.message || "CDP error")) : resolve()
-      })
-      ws.send(JSON.stringify({ id: 2, method: "Input.dispatchMouseEvent", params }))
-    })
-  } finally { try { ws.close() } catch {} }
-}
-
-/** 自动解掉当前屏幕上的滑块；没有滑块返回 null */
-export async function solveSlider(session) {
-  let raw = ""
-  try { raw = await evalInPage(session, SOLVE_SLIDER) } catch { return null }
-  if (!raw) return null
-  try { return JSON.parse(raw) } catch { return null }
-}
-
-/** 拖滑块 */
-export async function dragSlider(session, p) {
-  await cdpInput(session, { type: "mousePressed", x: p.fromX, y: p.fromY, button: "left", buttons: 1, clickCount: 1 })
-  const steps = 6
-  for (let i = 1; i <= steps; i++) {
-    const x = p.fromX + ((p.toX - p.fromX) * i) / steps
-    await cdpInput(session, { type: "mouseMoved", x, y: p.toY, button: "left", buttons: 1 })
-  }
-  await cdpInput(session, { type: "mouseReleased", x: p.toX, y: p.toY, button: "left", buttons: 0, clickCount: 1 })
 }
 
 /** 等 OAuth 授权码：监听 `/api/oauth/authorize` 的 302 Location，或 aipy-pro://oauth?code= 请求 */

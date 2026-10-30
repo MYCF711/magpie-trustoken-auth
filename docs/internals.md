@@ -248,3 +248,73 @@ portable 模式（exe 旁带数据）插件侧拿不到 exe 路径，无法还�
 
 `plugin-auth.json` 读不到时：**文件不存在 = 0 个账号**（新机器）；**读/解析失败 = 按「有账号」**
 （宁可少显示下载入口，也不要把下载链接挡在有账号的人面前），并 warn 一次。
+
+## 12. 合规整改：社区 review 的四条红线（2026-10-30）
+
+`magpie-community/plugins` 的收录 PR #527 被维护者 yetone 拒了，理由是 Trustoken 是**中转站（relay）**、
+不是厂商自有产品 —— 这个结论我们接受、不再申请收录。但 review 里指出的插件自身问题照修，
+与收不收无关。主人随后把口径定死：**推荐码可以带，账号身份不能带。**
+
+### 12.1 ① 推荐码可以带，账号身份不能带
+
+- `AUTHOR_INVITE`（`src/invite.mjs`）保留：那是维护者自己的邀请码，且支持 `TRUSTOKEN_INVITE` 覆盖。
+- 但**任何地方都不许把某个 uid / accountId 当默认值**：
+  `src/header-groups.mjs` 的 `defaultGroup()` 原来在「本地没有账号信息」时写死
+  `uid: "182238" / accountId: "189****8051"`（维护者自己的账号），并会把这份默认组**落盘**
+  （`~/.cache/magpie/trustoken-header-groups.json`）。现在：
+  - 没有账号信息 → 返回**空身份**的客户端组（只有 referral / 版本 / 平台）；
+  - 旧文件里那份带 uid / accountId 的默认组会被**丢掉重建**（本机已有安装自愈）；
+  - 顺带删掉了 `read189Auth()`（它按手机号前缀从 magpie 账号表里挑一个账号来借身份）。
+  - 事实核查：`headersFromGroup()` 从来只发 referral / 版本 / 平台 / 架构 —— uid / accountId /
+    affCode **不上网**，它们只是本地台账的键，所以「默认组没有身份」不影响请求。
+
+### 12.2 ② 插件自己的凭据走钩子，不读 magpie 私有文件
+
+review 原话：*A plugin gets its own credentials through the hooks.*
+
+- 删掉了 `preferredInvite()`：它直接解析 magpie 的 `logins.json` + `plugin-auth.json` 去认
+  「magpie 首选账号」，再取该账号的邀请码。
+- **这个功能保不住**：magpie 的钩子拿不到「哪个账号是首选」—— `getAuth()` 只给当前账号
+  （而且只在 `loader` / `usage` / `checkin` / `refresh` 里），`auth.methods` 不给任何账号信息。
+  现在只有两种码源：用户显式填的（`custom`）、滚动码（`auto` = 最近登录 / 签到的那个号；
+  那个码是 `rollInvite()` 用**该账号自己的 token** 调 `/api/user/self` 记下来的，走的是钩子）。
+  登录弹窗的提示相应改为「留空 = 自动；也可直接填一个邀请码」。
+- 唯一保留的 magpie 文件读取是 `src/accounts.mjs` 读账号表判断「**本机有没有**账号」
+  （0.3.3 的登录入口分流要用，主人明确认可）—— 那是存在性判断，不取任何账号身份。
+
+### 12.3 ③ 不刷厂商的推广任务
+
+review 原话：*That farms a vendor's promotion on the user's account.*
+
+- `auth.checkin` 现在只做两件事：调厂商的签到接口；把服务端**已经标成 `claimable`** 的奖励领掉
+  （那是用户自己在客户端里干活换来的）。删掉了：
+  - 「用最低价模型补缺口」：读本机 AiPy 的 key / 端口 → `POST /api/aipy/createTask` 批量建任务（会话）；
+  - filler 请求：给 `/chat/completions` 塞假 `Aipy-Task-ID` 头狂发小请求。
+- `src/aipy-local.mjs` 只剩只读的 `readTrustokenToken()`（「本机登录（读取 AiPy 会话）」要用），
+  建任务那半（`readAipyApiKey` / `findAipyPort` / `createAipyTask` / `ensureAipyTasks`）整段删除。
+- `scripts/aipy-daily.mjs` 同步改成「看进度 + 领已到手的奖励」，不再建任务。
+
+### 12.4 ④ 不写死安装包直链、不代解验证码
+
+- 下载入口从 `https://promo.aipyaipy.com/downloads/aipy-pro-2.1.1-x64.exe`（写死版本号的 .exe 直链）
+  改成**官方下载页** `https://www.aipyaipy.com/`（页面自带各平台最新版）。
+- **删除自动解滑块**：`browser-login.mjs` 里的 `SOLVE_SLIDER`（读背景图 + 拼图块、按 alpha 蒙版做
+  边缘梯度互相关找凹槽）、`cdpInput()`、`solveSlider()`、`dragSlider()` 全部删除，
+  `waitForLogin()` 里的自动拖拽分支一并删除。手机号登录改为**打开可见窗口**：页面出现
+  「请拖动滑块完成拼图」时，插件只提示「需要你本人在窗口里拖动滑块」，等用户拖完、短信发出，
+  再把验证码填进 magpie。代替用户完成风控验证属于绕过风控，不做。
+- 可见窗口带来的一处行为变化：`launchLoginBrowser(..., { headless: false })`，原来
+  「先 headless、失败再可见」的两段式取消 —— 不可见的窗口里用户没法手动过验证。
+
+### 12.5 怎么防止改回去
+
+`tests/compliance.test.mjs` 5 条（源码锁 + 行为测）：
+源码锁逐文件禁止出现 `182238` / `189****8051` / `logins.json` / `preferredInvite` /
+`solveSlider` / `dragSlider` / `SOLVE_SLIDER` / `/api/captcha/check` / `promo.aipyaipy.com` /
+`aipy-pro-2.1.1` / `createTask` / `Aipy-Task-ID` / `ensureAipyTasks` 等；
+行为测覆盖「空 home 下 `defaultGroup()` 无身份」「旧文件里的写死身份被清掉」
+「下载入口 `authorize()` 返回官方下载页」。
+
+> ⚠ 未验证：可见窗口 + 人工滑块这条链路**没有跑过真机短信**（需要真实手机号）。
+> 代码路径已按上述逻辑改写、语法与测试通过，但「用户拖完滑块后短信确实发出、验证码能走通登录」
+> 只在旧的自解滑块版本上验证过。装 0.3.5 后第一次手机号登录即可确认。
