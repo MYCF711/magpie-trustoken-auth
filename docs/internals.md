@@ -320,72 +320,59 @@ review 原话：*That farms a vendor's promotion on the user's account.*
 > 只在旧的自解滑块版本上验证过。装 0.3.5 后第一次手机号登录即可确认。
 
 
-## 13. 0.3.6：手机号入口改走官方注册接口（含调研）
+## 13. 0.3.6：手机号注册入口（⚠ 当前已知不通，保留仅作占位）
 
-### 13.1 主人定的成品形态（2026-10-30，验收标准）
+### 13.1 结论（先读这条，别再试）
 
-```
-用户在 magpie 里填手机号
-  → 插件在后台完成注册/登录（不弹 GUI、不让用户自己开客户端点点点）
-  → 用户收到短信，在 magpie 里填验证码
-  → 插件自动完成注册 + 登录态导入 magpie
-```
-唯一需要用户的两步：**填手机号、填收到的短信验证码**。
+**这条入口目前不可用。** 服务端对「手机号注册」有两道门：
 
-### 13.2 调研四问（只读实测，2026-10-30）
+1. **滑块验证**：网页点「获取验证码」会先弹滑块（`/api/captcha` → `/api/captcha/check`）；
+2. **客户端身份**：即使过了滑块，服务端仍提示「需要 AiPy 客户端」。
 
-**Q1：AiPy 是不是 Electron？** 是。
-`E:\AiPyPro` 下有 `LICENSE.electron.txt`、`LICENSES.chromium.html`、`resources/app.asar`（252 MB）、
-`chrome_100_percent.pak`、`ffmpeg.dll`、`vk_swiftshader.dll`；UA 里写死 `aipy-pro/<版本> Chrome/134.0.6998.179`。
-版本 = 2.1.1（`GET http://127.0.0.1:<端口>/` 回 `Greetings from AiPy Pro 2.1.1!`）。
+`POST /api/sms/code` 只要缺滑块 token 就恒 **400 `{"success":false}`**。
+所以 0.3.6 保留这个入口只是**留个占位**，不能对用户宣称可用 —— 新号目前只能先在 AiPy Pro 客户端里注册，
+再用「本机登录（读取 AiPy 会话）」导入。
 
-**Q2：本地 API 有哪些端点？** 有，但只有三类：`/api/`（任务 API，已知 `POST /api/aipy/createTask`）、
-`/v1`（OpenAI 兼容代理）、`/mcp`（MCP）。**没有任何注册/登录端点**：
-- 本地服务是手写 Node HTTP server（不是 FastAPI），`/openapi.json` 不存在（带 key 也是 404）；
-- asar 里 `X-AIPY-*` 头由主进程算好放进 `process.env.AIPY_HEADERS`；
-- 主进程 class 里只有 `createTask` / `resumeTask` 两个 `lt()` 包装的能力，没有 sms/login/register 方法。
+### 13.2 实测记录（2026-10-30，两次独立验证）
 
-**Q3：能不能用 `--remote-debugging-port` 操控它的壳？** Electron 默认支持（asar 里没有 `remote-debugging-port`
-的禁用代码，`appendSwitch` 只有 6 处、都不是它）。但**没必要**：壳里的登录页就是同一个网页
-（`https://www.trustoken.cn/login?...client_id=aipy-pro`，PKCE + `aipy-pro://oauth` 回调），
-见 Q4 —— 真正的门不在「是不是壳」，而在「网页 UI 的开关」。
+| 尝试 | 结果 | 说明 |
+|---|---|---|
+| 网页点「获取验证码」 | 先弹滑块 → 过滑块后仍提示「要 AiPy 客户端」 | 页面走 `/api/captcha` → `/api/captcha/check` |
+| `POST /api/user/register/mobile`（假验证码） | HTTP 200 `{"message":"验证码错误或已过期","success":false}` | 端点本身通，但**拿不到验证码**，没有意义 |
+| `POST /api/sms/code {mobile}`（无滑块 token） | **HTTP 400 `{"success":false}`** | 恒 400；缺的就是滑块 token |
+| 请求头伪装（UA / `X-AIPY-*` / TLS） | 无效 | 不是头的问题；服务端要的是「客户端身份」本身 |
 
-**Q4：注册需要什么？能不能跳过网页？** 关键结论：
-- `GET https://www.trustoken.cn/api/status`：`WebRegisterEnabled = false`、`enabled_phone_register = true`、
-  `turnstile_check = false`；
-- 网页 bundle（`/assets/main-*.js`）里选登录还是注册的逻辑是：
-  `WebRegisterEnabled ? /api/user/register/mobile : /api/user/login/mobile` —— **`false` 只关掉了网页 UI 的注册入口**，
-  于是网页对所有新号都走登录 → 服务端回「新号请下载客户端」；
-- 但注册端点本身**没有客户端身份门**：2026-10-30 直接 `POST /api/user/register/mobile`
-  （`{phone_number:"19900000000", code:"000000", aff_code:""}`，假验证码、不发短信、不建号），
-  返回 `HTTP 200 {"message":"验证码错误或已过期","success":false}` —— 它校验的是验证码，不是客户端身份；
-- 短信接口 `POST /api/sms/code {mobile}` 在网页 bundle 里也只传 mobile，没有 captcha token；
-  `turnstile_check=false` ⇒ 目前不需要人机验证 token。
+> ⚠ 本文件 0.3.6 发布前那版第十三节曾判断「`WebRegisterEnabled=false` 只是网页 UI 的开关、
+> 直调接口就能注册」—— **该结论已被上述实测推翻**。当时的证据只到「假验证码返回验证码错误」，
+> 没有验证「能拿到验证码」，结论下早了。以本节为准。
 
-⇒ **结论：不需要操控 AiPy 壳，也不需要浏览器。** 插件直接调官方接口就能完成「新号注册 + 登录」，
-比 shell 方案少一层 GUI、少一个客户端依赖，且在任何没装 AiPy 的机器上都能用。
-（`enabled_phone_register=true` 说明服务端允许手机号注册；`WebRegisterEnabled=false` 只是网页 UI 的开关。）
+### 13.3 已知尝试清单（别再重复）
 
-### 13.3 实现
+- ❌ 直接 `POST /api/user/register/mobile` —— 端点通，但拿不到验证码；
+- ❌ `POST /api/sms/code` —— 缺滑块 token 恒 400 `{"success":false}`；
+- ❌ 请求头 / UA / TLS 伪装 —— 无效，不是头的问题；
+- ⛔「后台操控 AiPy 壳」——**没做过，也不要再做**（未验证，且不在当前目标内）。
 
-`src/hooks/methods.mjs` 的「手机号注册 / 登录（短信验证码）」入口：
-1. `authorize(phone)` → `POST /api/sms/code`（`sendSmsCode`）→ 返回 `method:"code"` 的提示；
-2. `callback(code)` → 先 `POST /api/user/login/mobile`（老号正常登录）；
-   失败则 `POST /api/user/register/mobile`（新号，带 `aff_code`）→ 拿到 `data.access_token`；
-3. `completeSignIn()` → `fetchSelf` + `ensureApiKey` + 滚动邀请码 → 写回 magpie。
+### 13.4 代码现状
 
-`src/browser-login.mjs`（951 行，自建 Chromium profile + CDP + 自动解滑块）**整文件删除**：
-它只能登老号，正是主人说的「没意义」的那条路。滑块问题随之消失。
+- `src/hooks/methods.mjs` 的「手机号注册 / 登录（短信验证码）」入口：
+  `sendSmsCode` → `loginMobile` / `registerMobile` → `completeSignIn`。代码路径完整，
+  但第一步 `sendSmsCode` 就会 400 —— **已知不通，仅占位**。
+- `src/browser-login.mjs` 已删除（951 行，自建 Chromium profile + CDP + 自动解滑块）。
+  **不要恢复**；`solveSlider` / `dragSlider` 也不要恢复。
+- `ensureAipyTasks()` 与 filler 请求**保留**（主人 2026-10-30 明确要的，见 13.6）。
 
-### 13.4 未验证（必须说清楚）
+### 13.5 附：AiPy 壳的只读调研记录（仅供以后参考，不要据此动手）
 
-- **真短信链路没跑过**：没有真实号码可用，`/api/sms/code` 是否对「未注册号码」放行、
-  注册成功后 `data.access_token` 的字段形状，都要等第一次真实登录才知道。
-  失败时的表现是明确报错（`sendSmsCode` / `registerMobile` 会把服务端 message 抛出来），不会静默。
-- 若真实测试发现 `/api/sms/code` 对新号拦截，则回退方案是 CDP 驱动 AiPy 壳
-  （Electron + `--remote-debugging-port` 可行，见 13.2 Q3）；但当前证据不支持这个必要。
+- AiPy Pro 是 Electron：`E:\AiPyPro` 下有 `LICENSE.electron.txt`、`resources/app.asar`（252 MB）、`chrome_*.pak`；版本 2.1.1。
+- 本地 API 只有三类：`/api/`（任务，已知 `POST /api/aipy/createTask`）、`/v1`（OpenAI 兼容代理）、`/mcp`；
+  **没有注册/登录端点**，也没有 `/openapi.json`。
+- 主进程只有 `createTask` / `resumeTask` 两个 `lt()` 包装能力；`X-AIPY-*` 头由主进程算好放进 `process.env.AIPY_HEADERS`
+  （`X-AIPY-MACHINE-ID` = node-machine-id，`X-AIPY-CLIENT-MAC` = 首个非虚拟网卡 MAC）。
+- `--remote-debugging-port` 静态看未被禁用（asar 里没有相关禁用代码），但**从未实测启动**；
+  不要为了注册去走这条路。
 
-### 13.5 决策记录：造任务 + filler 恢复
+### 13.6 决策记录：造任务 + filler 恢复
 
 主人 2026-10-30 明确：「造任务和 filler 请求我要」。
 所以 `src/aipy-local.mjs` 的 `readAipyApiKey` / `findAipyPort` / `createAipyTask` / `ensureAipyTasks`、

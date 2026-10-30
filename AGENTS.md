@@ -89,7 +89,7 @@ PR 的 `rules` 检查全绿并合并后，才从与 `origin/main` 完全一致�
 
 | # | 症状 | 判据 | 出处 |
 |---|---|---|---|
-| 29 | 社区 review 说插件「A user's sign-in shouldn't carry anyone's referral or identity」/「That farms a vendor's promotion」/ 插件在替用户解验证码 | 当前口径（主人 2026-10-30 拍板，**以这条为准**）：① **推荐码可以带，账号身份不能带** —— `AUTHOR_INVITE` 保留、可用 `TRUSTOKEN_INVITE` 覆盖；任何地方不许把某个 uid / accountId 当默认值（`defaultGroup()` 曾经写死过 `182238` / `189****8051`，现在没有账号信息就返回空身份，旧文件里的写死值会在下次调用时被清掉）② **插件自己的凭据走钩子** —— 不许读 magpie 的账号表 / 登录表去认「首选账号」（`preferredInvite()` 已删；唯一例外是 `src/accounts.mjs` 读账号表判断「本机有没有账号」，存在性判断、不取身份）③ **造任务 + filler 是主人明确要保留的**（`ensureAipyTasks` / `Aipy-Task-ID`，别按 review 再删）④ **手机号入口 = 官方注册接口**（`sendSmsCode` → `loginMobile` / `registerMobile`），不经过浏览器、不经过 AiPy 壳；`src/browser-login.mjs` 已删除 ⑤ **下载入口跳官方下载页**，不写死安装包直链。判据：`node --test` 的 `tests/compliance.test.mjs` 5 条（源码锁 + 行为测） | [`src/hooks/methods.mjs`](./src/hooks/methods.mjs) · [`src/hooks/checkin.mjs`](./src/hooks/checkin.mjs) · [internals 十三](./docs/internals.md) · `tests/compliance.test.mjs` |
+| 29 | 社区 review 说插件「A user's sign-in shouldn't carry anyone's referral or identity」/「That farms a vendor's promotion」/ 插件在替用户解验证码 | 当前口径（主人 2026-10-30 拍板，**以这条为准**）：① **推荐码可以带，账号身份不能带** —— `AUTHOR_INVITE` 保留、可用 `TRUSTOKEN_INVITE` 覆盖；任何地方不许把某个 uid / accountId 当默认值（`defaultGroup()` 曾经写死过 `182238` / `189****8051`，现在没有账号信息就返回空身份，旧文件里的写死值会在下次调用时被清掉）② **插件自己的凭据走钩子** —— 不许读 magpie 的账号表 / 登录表去认「首选账号」（`preferredInvite()` 已删；唯一例外是 `src/accounts.mjs` 读账号表判断「本机有没有账号」，存在性判断、不取身份）③ **造任务 + filler 是主人明确要保留的**（`ensureAipyTasks` / `Aipy-Task-ID`，别按 review 再删）④ **手机号入口 = 官方注册接口，但当前已知不通**（`sendSmsCode` → `loginMobile` / `registerMobile`；服务端要滑块 + AiPy 客户端身份，`POST /api/sms/code` 缺滑块 token 恒 400，请求头伪装无效）—— 入口仅占位，别宣称可用；`src/browser-login.mjs` 已删除 ⑤ **下载入口跳官方下载页**，不写死安装包直链。判据：`node --test` 的 `tests/compliance.test.mjs` 5 条（源码锁 + 行为测） | [`src/hooks/methods.mjs`](./src/hooks/methods.mjs) · [`src/hooks/checkin.mjs`](./src/hooks/checkin.mjs) · [internals 十三](./docs/internals.md) · `tests/compliance.test.mjs` |
 
 ---
 
@@ -198,7 +198,7 @@ node scripts/probe-vision.mjs <provider/model> …
 | [`tests/semantics.test.mjs`](./tests/semantics.test.mjs) | 26 条语义锁（含 6 条额度窗口 + 4 条上游错误码翻译） | `check.mjs` 查不到的那部分，只有它能拦 |
 | [`tests/error-classify.mjs`](./tests/error-classify.mjs) | 25 条上游 400/422 → 402/502/404/429 的翻译锁（报文是实测原文），含「非 400/422 一个字都不读」 | 坑 26 / 27；`npm test` 会一起跑 |
 | [`tests/login-methods.test.mjs`](./tests/login-methods.test.mjs) | 5 条登录入口分流锁：0 账号 3 入口 / 有账号 1 入口、`hasAccounts` 文件口径（坏 JSON 保守按有账号）、旧缓存下下载入口的行为层兜底、本机登录两种明确报错、label 去动态化 | 坑 28；`node --test` 自动跑 |
-| [`tests/compliance.test.mjs`](./tests/compliance.test.mjs) | 5 条口径锁：推荐码可带 / 账号身份不可带、不读 magpie 私有账号文件、**造任务+filler 必须在（正向锁）**、下载跳官方页、**手机号入口走官方注册接口** | 坑 29；`node --test` 自动跑 |
+| [`tests/compliance.test.mjs`](./tests/compliance.test.mjs) | 5 条口径锁：推荐码可带 / 账号身份不可带、不读 magpie 私有账号文件、**造任务+filler 必须在（正向锁）**、下载跳官方页、**手机号入口走官方注册接口（当前不通，仅占位）** | 坑 29；`node --test` 自动跑 |
 
 **为什么 `src/quota.mjs` 值得单独一个文件**：额度窗口是 magpie **画卡片**和**智能路由排序**的同一个输入。
 写错不会崩，只会让卡片显示「剩余额度未知」、让这个号在路由里被当成不存在 —— 用户以为插件坏了，

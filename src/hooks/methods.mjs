@@ -117,14 +117,11 @@ export function makeMethods(c, deps = {}) {
         const inviteCode = inviteToUse()
         const group = pickGroup()
 
-        // 直接调官方短信接口 —— **不经过网页、不经过浏览器、不经过 AiPy 壳**。
-        // 为什么这样可以注册新号（2026-10-30 实测）：
-        //   · 服务端 /api/status 里 WebRegisterEnabled=false —— 那只是关掉了「网页 UI 的注册入口」，
-        //     网页因此只敢调 /api/user/login/mobile，新号就被「请下载客户端」挡住；
-        //   · 同一份 status 里 enabled_phone_register=true，注册端点 /api/user/register/mobile
-        //     直接 POST 是通的（实测：假验证码返回「验证码错误或已过期」，不是「请下载客户端」）；
-        //   · turnstile_check=false，短信接口目前也不要求人机验证 token。
-        // 所以插件自己就能完成「新号注册 + 登录」，用户只需要：填手机号、填短信验证码。
+        // ⚠ 这条入口当前**已知不通，仅占位**（2026-10-30 两次实测）：
+        //   · 网页点「获取验证码」先弹滑块（/api/captcha → /api/captcha/check），过完仍提示要 AiPy 客户端；
+        //   · 直接 POST /api/sms/code 缺滑块 token 恒 400 {"success":false}；
+        //   · 请求头 / UA / TLS 伪装都试过，无效（不是头的问题）。
+        // 保留代码是为了以后有人接续研究；新号目前只能在 AiPy Pro 客户端里注册，再用「本机登录」导入。
         // 详见 docs/internals.md 十三。
         await sendSmsCode(phone)
 
