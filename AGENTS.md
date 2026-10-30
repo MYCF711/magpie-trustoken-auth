@@ -96,6 +96,12 @@ PR 的 `rules` 检查全绿并合并后，才从与 `origin/main` 完全一致�
 |---|---|---|---|
 | 30 | 新号注册被拒（`新增账号需下载AiPy Pro客户端`）但老号能登录；或注册成功却拿不到 token；或第二次登录被弹回旧授权页 | 三道门 + 一条落盘：① 窗口 UA 必须含 `aipy-pro/*`（服务端靠它认客户端；普通 Chrome UA 必被拒），且必须**在请求层覆盖** —— 启动参数只覆盖导航，XHR/fetch 要用 `Network.setUserAgentOverride` + `Fetch.continueRequest` 重写（见 `src/browser-login.mjs` 的 `openUaGuard`）② 必须从 `/api/oauth/authorize` 307 进 `/oauth/login` 的**同一个标签页**（该页把 `sessionStorage.layout` 置 `false`，前端才走 `/api/user/register/mobile`；换标签页就丢）③ 登录后 node 带 session cookie 重签 authorize（`redirect:"manual"` 读 302 的 `Location`，因为 `aipy-pro://` 导航 CDP 拦不到）→ 换 token ④ **verifier 必须先落盘**（`fileOf("oauth-pkce", {siteId:"trustoken", account})`，同一手机号 10 分钟内复用），只在内存会丢。判据：`node --test` 的 `tests/register-flow.test.mjs` 7 条 + 真机弹窗注册一次 | [`src/browser-login.mjs`](./src/browser-login.mjs) · [`src/oauth.mjs`](./src/oauth.mjs) · [internals 十四](./docs/internals.md) · `tests/register-flow.test.mjs` |
 
+再一条是 **0.3.10 的插件选项**（magpie 的 PluginOptions 只支持布尔）：
+
+| # | 症状 | 判据 | 出处 |
+|---|---|---|---|
+| 31 | 登录页有邀请码输入框 / 想给插件加「下拉选某个账号」或「填一个字符串」的选项，结果 UI 根本画不出来 | magpie 的 `PluginOptions` 是 `map[string]map[string]bool` —— **只有布尔开关**。做法（学 magicrew）：`auth.options: [{ key: "invite-first", label, description, default: false }]`；工厂 `async (input) => {...}` 里 `setInviteOptionReader(c.PROVIDER, key => input?.magpie?.option?.(c.PROVIDER, key) === true)` —— **传读取函数、不缓存布尔值**（拨开关不重启 host，每次读才是当前值；input 可能 undefined）。想装字符串只能回到登录页文本框 —— 正是这次拆掉的东西。判据：`tests/invite-option.test.mjs` 5 条 | [`index.mjs`](./index.mjs) · [`src/invite.mjs`](./src/invite.mjs) · [internals 14.6](./docs/internals.md) · `tests/invite-option.test.mjs` |
+
 ---
 
 ## 三、命令
@@ -202,9 +208,10 @@ node scripts/probe-vision.mjs <provider/model> …
 | [`src/quota.mjs`](./src/quota.mjs) | `usageWindow` / `usage` / `toIso` / `QuotaShapeError` | **把「写错不报错、但 GUI 和智能路由会坏」的五类窗口写法变成运行时错误** —— 见下方的表 |
 | [`tests/semantics.test.mjs`](./tests/semantics.test.mjs) | 26 条语义锁（含 6 条额度窗口 + 4 条上游错误码翻译） | `check.mjs` 查不到的那部分，只有它能拦 |
 | [`tests/error-classify.mjs`](./tests/error-classify.mjs) | 25 条上游 400/422 → 402/502/404/429 的翻译锁（报文是实测原文），含「非 400/422 一个字都不读」 | 坑 26 / 27；`npm test` 会一起跑 |
-| [`tests/login-methods.test.mjs`](./tests/login-methods.test.mjs) | 5 条登录入口分流锁：0 账号 3 入口 / 有账号 1 入口、`hasAccounts` 文件口径（坏 JSON 保守按有账号）、旧缓存下下载入口的行为层兜底、本机登录两种明确报错、label 去动态化 | 坑 28；`node --test` 自动跑 |
-| [`tests/compliance.test.mjs`](./tests/compliance.test.mjs) | 5 条口径锁：推荐码可带 / 账号身份不可带、不读 magpie 私有账号文件、**造任务+filler 必须在（正向锁）**、下载跳官方页、**手机号入口走受控浏览器弹窗注册** | 坑 29；`node --test` 自动跑 |
+| [`tests/login-methods.test.mjs`](./tests/login-methods.test.mjs) | 4 条登录入口分流锁：0 账号 2 入口（本机 / 手机号弹窗，无下载）/ 有账号 1 入口、`hasAccounts` 文件口径（坏 JSON 保守按有账号）、本机登录两种明确报错、label 去动态化 | 坑 28；`node --test` 自动跑 |
+| [`tests/compliance.test.mjs`](./tests/compliance.test.mjs) | 5 条口径锁：推荐码可带 / 账号身份不可带、不读 magpie 私有账号文件、**造任务+filler 必须在（正向锁）**、**不再有下载入口**、**手机号入口走受控浏览器弹窗注册** | 坑 29；`node --test` 自动跑 |
 | [`tests/register-flow.test.mjs`](./tests/register-flow.test.mjs) | 7 条弹窗注册判据锁：verifier 43 字符 + SHA256 challenge、AiPy UA、trustoken `session` cookie、302 `aipy-pro://oauth?code=`、`expires_in ≈ 2592000`、body 只读一次、**UA 请求层覆盖与头重写** | 坑 30；`node --test` 自动跑 |
+| [`tests/invite-option.test.mjs`](./tests/invite-option.test.mjs) | 5 条邀请码开关锁：默认滚动 / 开关开固定 / 读抛错当关 / `auth.options` 与 `input.magpie.option` 接线 / 登录页只剩 phone prompt | 坑 31；`node --test` 自动跑 |
 
 **为什么 `src/quota.mjs` 值得单独一个文件**：额度窗口是 magpie **画卡片**和**智能路由排序**的同一个输入。
 写错不会崩，只会让卡片显示「剩余额度未知」、让这个号在路由里被当成不存在 —— 用户以为插件坏了，

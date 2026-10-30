@@ -1,3 +1,10 @@
+## 0.3.10 — 2026-10-30
+
+- **邀请码改成插件选项开关**（学 magicrew 的 `auth.options` 形式）：`auth.options: [{ key: "invite-first", label: "邀请码固定不滚动", description: "...", default: false }]`。开 = 新号注册固定用当前码（有 fixed/custom 记录就用它，否则作者码 `Chdr`）；关（默认）= 跟随最后一个登录 / 签到的账号的滚动码。magpie 的 `PluginOptions` 是 `map[string]map[string]bool`，只支持布尔，所以做不了「下拉选账号」。
+- **删掉登录页的邀请码输入框**：`手机号注册 / 登录（弹窗）` 现在只问手机号；`saveInviteChoice()` / `modeHint()` 不再被调用。工厂改成 `async (input) => {...}`，`setInviteOptionReader(c.PROVIDER, key => input?.magpie?.option?.(c.PROVIDER, key) === true)` —— 传的是读取函数，拨一下立刻生效，不缓存布尔值。
+- **下载入口确认删除**：0 账号时只剩「本机登录」+「手机号注册 / 登录（弹窗）」两条；`firstLoginMethod` 定义保留但不挂载（万一弹窗被上游封了可一行恢复）。
+- test: 新增 `tests/invite-option.test.mjs` 5 条（默认滚动 / 开关开固定 / 读抛错当关 / index 的 `auth.options` 与 `input.magpie.option` 接线 / 登录页只剩 phone 一个 prompt）。
+
 ## 0.3.9 — 2026-10-30
 
 - **手机号注册入口补上邀请码选择** —— 之前只有「首次使用：下载客户端注册」那条会问邀请码；手机号注册入口直接 `inviteToUse()`，用户无法在注册时临时指定码。现在手机号入口也带一个可选输入框：留空 = 自动（跟随最近登录/签到的号，否则用作者码 `Chdr`），填了 = 指定这个码。与 `saveInviteChoice()` 同一套策略，自动与指定两种模式都可用。

@@ -20,6 +20,7 @@ import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fetchSelf } from "./api.mjs"
 import { isKnownUid } from "./accounts.mjs"
+import { PROVIDER } from "./context.mjs"
 
 /** 作者（本仓库维护者 MYCF711）的 Trustoken 邀请码；可用环境变量覆盖 */
 export const AUTHOR_INVITE = String(process.env.TRUSTOKEN_INVITE || "Chdr").trim()
@@ -95,18 +96,54 @@ export function clearInvitePolicy() {
   } catch {}
 }
 
+// ═══ 邀请码模式：由 magpie 的「插件选项」布尔开关决定（0.3.10） ═══
+//
+// magpie 的 PluginOptions 是 map[provider]map[key]bool —— **只支持布尔**，
+// 装不下「下拉选某个账号」或「填一个字符串」。所以登录页那个邀请码文本框拆掉，
+// 改成供应商编辑器里的一个 Off/On：
+//
+//   开关关（默认）  自动 —— 跟随「最后一个登录 / 签到的号」的滚动码（readInvite → AUTHOR_INVITE 兜底）
+//   开关开          固定 —— 固定用当前记录的码（有 fixed/custom 策略就用它，否则作者码）
+//
+// 开关不是这个文件画的：它是 `auth.options`（index.mjs 声明），插件通过
+// `input.magpie.option(provider, key)` 读 —— 每次读都是当前值，拨一下立刻生效。
+// ⇒ 这里只存「怎么读」：setInviteOptionReader(siteId, fn)。
+
+const optionReaders = new Map()
+
+/** 开关 key —— 必须与 index.mjs 的 auth.options[].key 一致 */
+export const INVITE_FIRST_OPTION = "invite-first"
+
+/** 把「怎么读这个供应商的开关」交给 invite.mjs */
+export function setInviteOptionReader(siteId, read) {
+  if (typeof read === "function") optionReaders.set(siteId, read)
+}
+
+/**
+ * 「邀请码固定不滚动」这个开关现在是开的吗。
+ * 读不到（没注册 reader / 老 magpie 没有 option / 抛错）一律当**关** —— 保持滚动（默认行为）。
+ */
+export function inviteFirstOn(siteId = PROVIDER) {
+  const read = optionReaders.get(siteId)
+  if (!read) return false
+  try {
+    return read(INVITE_FIRST_OPTION) === true
+  } catch {
+    return false
+  }
+}
+
 /**
  * 这次注册该带的码。
  *
- * 「magpie 首选账号」那套已删除：插件在钩子外面拿不到
- * 「哪个账号是首选」—— `getAuth()` 只给当前账号，`auth.methods` 不给任何账号信息。
- * 现在只有两种来源：用户显式指定的码（fixed / custom），或滚动码（auto，跟随最近
- * 登录 / 签到的那个号，那个码是 rollInvite() 用账号自己的 token 记下来的）。
+ * 开关开 → 固定：有 fixed/custom 策略码就用它，否则作者码 AUTHOR_INVITE；
+ * 开关关 → 滚动：readInvite()（最近登录 / 签到记下的码），没有就作者码。
  */
 export function inviteToUse(locked = true) {
-  if (locked) {
+  if (inviteFirstOn()) {
     const pol = readInvitePolicy()
     if ((pol.mode === "fixed" || pol.mode === "custom") && pol.code) return pol.code
+    return AUTHOR_INVITE
   }
   return readInvite() || AUTHOR_INVITE
 }

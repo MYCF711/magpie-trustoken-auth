@@ -35,7 +35,7 @@ import { launchLoginWindow, aipyUserAgent, pickSessionCookie } from "../browser-
 import { fileOf, readJson, writeJson, removeJson } from "../store.mjs"
 import { readTrustokenToken } from "../aipy-local.mjs"
 import { execFileSync } from "node:child_process"
-import { inviteToUse, rollInvite, modeHint, saveInviteChoice, isKnownAccount } from "../invite.mjs"
+import { inviteToUse, rollInvite, isKnownAccount } from "../invite.mjs"
 import { hasAccounts } from "../accounts.mjs"
 import { defaultGroup, pickGroup, saveGroup } from "../header-groups.mjs"
 
@@ -117,20 +117,11 @@ export function makeMethods(c, deps = {}) {
           validate: (v) =>
             /^1\d{10}$/.test(String(v || "").replace(/[\s-]/g, "")) ? undefined : "11 位手机号，只要数字",
         },
-        // 邀请码：留空 = 自动（跟随最近登录/签到的号，否则用作者码）；填了 = 指定这个码。
-        // 与「首次使用：下载客户端注册」那条的语义一致，见 src/invite.mjs 的 saveInviteChoice。
-        {
-          type: "text",
-          key: "invite",
-          message: "邀请码（可选）",
-          placeholder: modeHint(),
-        },
       ],
       async authorize(inputs) {
         const phone = String(inputs?.phone || "").replace(/[\s-]/g, "")
         if (!/^1\d{10}$/.test(phone)) throw new Error("手机号不完整")
-        // 留空 / 0 = 自动；填了 = 指定。与「首次使用：下载」那条同一套策略。
-        saveInviteChoice(inputs?.invite)
+        // 邀请码不再问用户：由供应商编辑器里的「邀请码固定不滚动」开关决定（见 index.mjs 的 auth.options）
         const inviteCode = inviteToUse()
         const group = pickGroup()
         const account = maskPhone(phone)
@@ -221,77 +212,12 @@ export function makeMethods(c, deps = {}) {
     },
   ]
 
-  // 首次登录 = 下载 AiPy Pro 客户端并在客户端内注册，然后等本机 token 出现。
-  // 不再走网页 /api/user/register/mobile（服务端对新号是硬拦截）。
-  // 邀请码先选：留空 / 0 = 自动（跟随最近登录 / 签到的号），也可直接填一个码；选完再给官方下载页。
-  //
-  // ⚠ 这条路**只在「本机 0 个账号」时出现**（见函数末尾按 hasAccounts() 拼列表）。
-  //   即便 magpie 的 providers 列表缓存还是旧的、把这个入口显示给了有账号的人，
-  //   authorize() 里也会再判一次：有账号就**绝不返回下载链接**，直接给「请走本机登录」。
-  //   这就是「缓存不刷新，行为层兜底仍然正确」的那一层。
-  const firstLoginMethod = {
-    type: "oauth",
-    // label 必须是稳定文案：magpie 在插件加载时把 methods[].label 读走缓存，
-    // 动态邀请码放进 authorize 的 instructions（magicrew AGENTS 坑 31）。
-    label: `${c.PROVIDER_NAME} 首次使用：下载 AiPy Pro 客户端注册`,
-    async ask(inputs) {
-      // 有账号 → 一个问题都不问（理论上这个入口不会出现，兜住旧缓存）
-      if (hasAccountsNow()) return null
-      if (!inputs || !Object.prototype.hasOwnProperty.call(inputs, "invite")) {
-        return { type: "text", key: "invite", message: "邀请码", placeholder: modeHint() }
-      }
-      return null
-    },
-    async authorize(inputs) {
-      // 行为层兜底：有账号时绝不再走下载（详见上面的注释）
-      if (hasAccountsNow()) {
-        return {
-          url: "",
-          opened: true,
-          method: "auto",
-          instructions: "你已经有 Trustoken 账号了：这次不会再走下载安装。",
-          async callback() {
-            return {
-              type: "failed",
-              error:
-                "你已经有 Trustoken 账号了：请在 AiPy Pro 客户端登录要添加的号，再用「本机登录（读取 AiPy 会话）」导入；下载入口只给还没有账号的人。",
-            }
-          },
-        }
-      }
-      saveInviteChoice(inputs?.invite)
-      const code = inviteToUse()
-      const url = CLIENT_DOWNLOAD_URL
-      copyClipboard(code)
-      const first = await readTokenNow().catch(() => null)
-      const firstToken = first?.access_token || ""
-      return {
-        url,
-        opened: false,
-        method: "auto",
-        instructions: `邀请码 ${code} 已复制到剪贴板。
-下载安装包后，在 AiPy Pro 客户端里用新手机号完成首次注册；登录成功后这个窗口会自动导入登录态，不用再回来点任何东西。
-下载链接：${url}`,
-        async callback() {
-          const deadline = Date.now() + 10 * 60 * 1000
-          while (Date.now() < deadline) {
-            const tok = await readTokenNow().catch(() => null)
-            if (tok?.access_token && tok.access_token !== firstToken) {
-              return await completeSignIn(c, { access_token: tok.access_token, refresh_token: tok.refresh_token || tok.access_token }, { group: defaultGroup(), affCode: code })
-            }
-            await sleep(2000)
-          }
-          return { type: "failed", error: "等待 AiPy Pro 登录超时（10 分钟）：请确认客户端已登录新号" }
-        },
-      }
-    },
-  }
-
   // 入口集合按「本机有没有该供应商的账号」现算：
-  //   有账号（≥1）→ 只留「本机登录」一条：主人原话「有账号就直接走软件登录」，不要再弹下载。
-  //   没有账号     → 才露出「首次使用：下载客户端注册」，外加本机登录（客户端已装的人免下载）
-  //                 和手机号登录（已注册的号）。
-  // out = [手机号登录, 本机登录]
+  //   有账号（≥1）→ 只留「本机登录」一条：有账号就直接走软件登录，不要再弹下载。
+  //   没有账号     → 「手机号注册 / 登录（弹窗）」+「本机登录（读取 AiPy 会话）」两条。
+  //
+  // 下载入口已删除（0.3.10）：0.3.7 起弹窗能直接注册新号，不再需要引导用户装 AiPy Pro 客户端。
+  // firstLoginMethod 的定义还留着是为了「万一弹窗注册被上游封了」时能一行恢复；它不再挂载。
   if (hasAccountsNow()) return [out[1]]
-  return [firstLoginMethod, out[1], out[0]]
+  return [out[1], out[0]]
 }
