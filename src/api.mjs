@@ -113,7 +113,7 @@ async function webPostSoft(path, token, uid, body) {
 export async function sendSmsCode(mobile) {
   const body = await webPostSoft("/api/sms/code", "", null, { mobile })
   if (body.success === false) {
-    throw new ApiError(body.message || "短信发送失败：该号码可能未注册，或触发了风控", {
+    throw new ApiError(body.message || "短信发送失败：可能触发了风控，或号码格式不对", {
       url: `${WEB}/api/sms/code`,
     })
   }
