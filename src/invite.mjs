@@ -1,12 +1,19 @@
 // 邀请码 —— 学超级麦吉 0.3.32 的「邀请上级」实现
 //
-// 三份缓存，全在 ~/.cache/magpie（可整目录删，删了退回作者码）：
+// 三份缓存，全在 ~/.cache/magpie（可整目录删，删了退回内置的推荐码）：
 //   trustoken-invite.json          下一次注册带谁的码（滚动的）
-//   trustoken-invite-policy.json   邀请上级策略：auto / fixed / custom
-//   trustoken-invite-codes.json    见过哪些账号的码（登录时下拉框用）
+//   trustoken-invite-policy.json   邀请上级策略：auto / custom（fixed 是旧版本留下的）
+//   trustoken-invite-codes.json    见过哪些账号的码（登录 / 签到时记下来）
 //
-// Trustoken 的邀请码字段是 `/api/user/self` 的 `aff_code`（当前账号是 "Chdr"），
-// 注册时字段名是 `aff_code`（`POST /api/user/register/mobile`）。
+// Trustoken 的邀请码字段是 `/api/user/self` 的 `aff_code`，注册时字段名是 `aff_code`。
+//
+// ⚠ 只读**本插件自己的缓存**，不读 magpie 的私有文件。
+//   旧版本会直接读 magpie 的私有账号文件去认「magpie 首选账号」，社区 review 指出
+//   「A plugin gets its own credentials through the hooks」—— 已删。账号自己的码只能
+//   从钩子拿（auth.checkin 里用该账号的 token 调 /api/user/self，见 rollInvite），
+//   或者由用户显式填。
+//   （唯一例外是 src/accounts.mjs 读 magpie 的账号表判断「本机有没有账号」——
+//     那是「有没有」的存在性判断，不取任何账号身份。）
 
 import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
@@ -88,7 +95,14 @@ export function clearInvitePolicy() {
   } catch {}
 }
 
-/** 这次注册该带的码：锁定策略 → 滚动记录 → 作者码 */
+/**
+ * 这次注册该带的码。
+ *
+ * 「magpie 首选账号」那套已删除：插件在钩子外面拿不到
+ * 「哪个账号是首选」—— `getAuth()` 只给当前账号，`auth.methods` 不给任何账号信息。
+ * 现在只有两种来源：用户显式指定的码（fixed / custom），或滚动码（auto，跟随最近
+ * 登录 / 签到的那个号，那个码是 rollInvite() 用账号自己的 token 记下来的）。
+ */
 export function inviteToUse(locked = true) {
   if (locked) {
     const pol = readInvitePolicy()
@@ -101,41 +115,18 @@ export function authorInvite() {
   return AUTHOR_INVITE
 }
 
-/** magpie 账号页「首选」那个 trustoken 账号自己的邀请码 */
-export function preferredInvite() {
-  try {
-    const logins = JSON.parse(readFileSync(join(homedir(), ".config", "magpie", "logins.json"), "utf8"))
-    const rows = (Array.isArray(logins) ? logins : []).filter((r) => r && r.agent === "plugin:trustoken" && r.home)
-    if (!rows.length) return null
-    const first =
-      rows.find((r) => r.first === true) ||
-      rows.filter((r) => Number(r.order) > 0).sort((a, b) => Number(a.order) - Number(b.order))[0] ||
-      rows[0]
-    const auth = JSON.parse(readFileSync(join(homedir(), ".config", "magpie", "plugin-auth.json"), "utf8"))?.[String(first.home || "")]
-    const uid = String(auth?.uid || "").trim()
-    if (!uid) return null
-    const v = readAccountCodes()[uid]
-    if (!v?.code) return null
-    return { code: v.code, accountId: String(v.accountId || uid), uid }
-  } catch {
-    return null
-  }
-}
-
 export function modeHint() {
   const pol = readInvitePolicy()
-  if (pol.mode === "auto" || !pol.code) return "当前模式：自动，输入 1 切换：首选"
-  return "当前模式：首选，输入 0 切换：自动"
+  if (pol.mode === "fixed" || pol.mode === "custom") return `当前：填了码 ${pol.code}（留空 = 自动）`
+  return "留空 = 自动（跟随最近登录 / 签到的号）；也可直接填一个邀请码"
 }
 
+/** 登录弹窗里那一问的答案：留空 / 0 = 自动，其它 = 用户显式指定的邀请码 */
 export function saveInviteChoice(raw) {
   const t = String(raw ?? "").trim()
-  if (t === "1") {
-    const pick = preferredInvite()
-    if (pick) {
-      writeInvitePolicy({ mode: "fixed", code: pick.code, accountId: pick.accountId, uid: pick.uid })
-      return
-    }
+  if (t && t !== "0" && t !== "1") {
+    writeInvitePolicy({ mode: "custom", code: t })
+    return
   }
   writeInvitePolicy({ mode: "auto" })
 }
@@ -151,7 +142,7 @@ export function isKnownAccount(uid) {
   const u = String(uid || "").trim()
   if (!u) return false
   if (readAccountCodes()[u]) return true
-  // plugin-auth.json 的读法与口径只在 src/accounts.mjs 一处（登录方式分流也用同一份）
+  // magpie 账号表的读法与口径只在 src/accounts.mjs 一处（登录方式分流也用同一份）
   return isKnownUid(u)
 }
 
