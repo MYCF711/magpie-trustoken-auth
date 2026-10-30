@@ -3,6 +3,9 @@
 - **修复：弹窗注册报「没找到 Chromium 内核浏览器」，但机器上明明装了浏览器** —— 旧的 `browserCandidates()` 在 Windows 只查 5 条写死路径（Program Files / LOCALAPPDATA 下的 Chrome、Edge 的 `msedge.exe`），三处盲区全踩：① scoop 安装的 Chromium（`%USERPROFILE%\scoop\shims\chromium.exe`，且 scoop 会把 shims 加进 PATH，Windows 分支却完全不扫 PATH —— linux 分支用 `command -v` 扫了，Windows 漏了）；② 本机 Edge 主程序叫 `Microsoft Edge.exe` 而不是 `msedge.exe`（注册表 `App Paths\msedge.exe` 证实）；③ 用户照 magpie 生态文案设的 `MAGPIE_LINGXI_BROWSER` 环境变量插件根本不认。现在按优先级：**env 覆盖（`MAGPIE_LINGXI_BROWSER` / `MAGPIE_TRUSTOKEN_BROWSER`，分号分隔、不过滤存在性）→ 固定路径（Edge 双文件名 + scoop shim + Chromium 每用户 + Brave/360极速）→ Windows PATH 扫描 → 注册表 App Paths 兜底**。本机实测命中 Edge（改名）与 scoop Chromium 两个候选。
 - test: 新增 `tests/browser-candidates.test.mjs` 10 条（env 覆盖三态、Edge 双名、PATH 扫描含引号/相对路径丢弃、App Paths 兜底触发与跳过、去重、本机 scoop 回归锁）。
 - 报错文案与生态统一：找不到浏览器时教用户设 `MAGPIE_LINGXI_BROWSER`（原「本机没找到 Chrome / Edge」对用户没有出路）。
+- **fix（回退）：打不开受控浏览器时给用户一条自己走的路**（主人 2026-10-31 要求）：`launchLoginWindow()` 失败（含一个浏览器都没找到）时，`authorize()` 返回 `{ url: <登录网址>, opened: false, method: "code" }` —— magpie 会按 `plugins.go:788` 用系统浏览器打开；同时把网址**复制到剪贴板**，instructions 里写明「网址已复制」。回退**不是默认路径**：能起窗口时仍走弹窗注册（那样才拿得到 session cookie）。
+  登录态回收：系统浏览器拿不到 cookie，**通常不会自动导入** —— instructions 如实写明；若浏览器最终跳到 `aipy-pro://oauth?code=...`，用户可把整段粘回来，插件用这次的 verifier 换 token；否则请改用「本机登录（读取 AiPy 会话）」。
+- fix(test/CI)：Windows 路径改用 `win32.join`（CI 跑在 ubuntu 上，`path.join` 会拼成正斜杠导致 10 条浏览器探测测试全红）；env 覆盖的路径允许带包裹引号。
 
 ## 0.3.10 — 2026-10-30
 

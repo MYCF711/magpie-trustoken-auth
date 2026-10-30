@@ -4,9 +4,8 @@
 //       只留一个「本机登录（读取 AiPy 会话）」—— 点一下就把 AiPy Pro 客户端里
 //       已经登录的号导入 magpie，无输入、无选择页。
 //   · 没有账号：
-//       ① 「首次使用：下载 AiPy Pro 客户端注册」（问邀请码模式 → 下载链接 → 轮询登录态）
-//       ② 「本机登录（读取 AiPy 会话）」（客户端已经装好的人免下载）
-//       ③ 「手机号登录（无头浏览器）」（已注册的手机号直接登录）
+//       ① 「本机登录（读取 AiPy 会话）」（客户端已经装好的人免下载）
+//       ② 「手机号注册 / 登录（弹窗）」（受控 Chromium 完成注册 / 登录；打不开浏览器时回退成系统浏览器 + 复制网址）
 //
 // 「有没有账号」只能只读 ~/.config/magpie/plugin-auth.json（magpie 不给插件账号列表
 // API，理由与口径见 src/accounts.mjs 文件头）。读不到时保守按「有账号」处理。
@@ -30,7 +29,7 @@
 // 详见 docs/internals.md 十四。
 
 import { fetchSelf, ensureApiKey } from "../api.mjs"
-import { makePkce, authorizeUrlFor, fetchOAuthCode, exchangeOAuthCode, tokenExpiry, AIPY_REDIRECT_URI } from "../oauth.mjs"
+import { makePkce, authorizeUrlFor, codeFromLocation, fetchOAuthCode, exchangeOAuthCode, tokenExpiry, AIPY_REDIRECT_URI } from "../oauth.mjs"
 import { launchLoginWindow, aipyUserAgent, pickSessionCookie } from "../browser-login.mjs"
 import { fileOf, readJson, writeJson, removeJson } from "../store.mjs"
 import { readTrustokenToken } from "../aipy-local.mjs"
@@ -103,6 +102,7 @@ export function makeMethods(c, deps = {}) {
     readToken: readTokenNow = () => readTrustokenToken(),
     fetchSelf: fetchSelfNow = (token, uid) => fetchSelf(token, uid),
     copyToClipboard: copyClipboard = copyText,
+    launchWindow: launchWindowNow = (url, opts) => launchLoginWindow(url, opts),
   } = deps
   const out = [
     {
@@ -135,12 +135,61 @@ export function makeMethods(c, deps = {}) {
         const { verifier, challenge } = reusable ? saved : makePkce()
         if (!reusable) writeJson(pkceFile, { verifier, challenge, account, at: new Date().toISOString() })
 
+        const loginUrl = authorizeUrlFor(challenge, undefined, inviteCode)
         let win
         try {
-          win = await launchLoginWindow(authorizeUrlFor(challenge, undefined, inviteCode))
+          win = await launchWindowNow(loginUrl)
         } catch (e) {
-          removeJson(pkceFile)
-          throw new Error(`打不开注册窗口：${String(e?.message ?? e).slice(0, 300)}`)
+          // ⚠ 回退（主人 2026-10-31 要求）：打不开受控浏览器时，不能只报「没找到浏览器」。
+          // 把登录网址复制到剪贴板 + 返回 opened:false，让 magpie 用系统浏览器打开
+          // （host 的 plugins.go:788：`if !st.Opened { open(st.URL) }`）。
+          // 但系统浏览器这条路拿不到 session cookie —— 只能完成「网页登录」，不会自动导入；
+          // 若浏览器最终跳到 aipy-pro://oauth?code=...，用户可以把整段粘回来，用这次的 verifier 换 token。
+          const reason = String(e?.message ?? e).slice(0, 200)
+          try {
+            copyClipboard(loginUrl)
+          } catch {}
+          return {
+            url: loginUrl,
+            opened: false,
+            method: "code",
+            instructions:
+              `没能启动受控浏览器（${reason}）。
+` +
+              `登录网址（已复制到剪贴板）：
+${loginUrl}
+
+` +
+              `用系统浏览器打开上面的网址，完成手机号 / 微信登录。
+` +
+              `⚠ 这条回退只能完成网页登录：插件拿不到系统浏览器的 session cookie，**通常不会自动导入**。
+` +
+              `如果登录后浏览器地址栏出现 aipy-pro://oauth?code=...（或提示打开 AiPy Pro），把整段网址或 code 粘贴到下面的输入框，插件会用它换 token；
+` +
+              `没有的话，请改用「本机登录（读取 AiPy 会话）」导入（需要 AiPy Pro 客户端已登录同一个号）；或装一个 Chrome / Edge 再回来点「手机号注册 / 登录（弹窗）」。`,
+            async callback(raw) {
+              const t = String(raw || "").trim()
+              if (!t) {
+                return {
+                  type: "failed",
+                  error: "没有拿到 code：请改用「本机登录（读取 AiPy 会话）」导入，或安装 Chrome / Edge 后重试弹窗注册。",
+                }
+              }
+              try {
+                const code = /^aipy-pro:\/\/oauth\?/i.test(t) ? codeFromLocation(t) : t.replace(/^code[=:]\s*/i, "")
+                const tokenJson = await exchangeOAuthCode({ code, verifier, redirectUri: AIPY_REDIRECT_URI })
+                const tok = tokenExpiry(tokenJson)
+                removeJson(pkceFile)
+                return await completeSignIn(
+                  c,
+                  { access_token: tok.accessToken, refresh_token: tok.refreshToken || tok.accessToken, expires_in: tok.expiresIn },
+                  { group, affCode: inviteCode },
+                )
+              } catch (err) {
+                return { type: "failed", error: String(err?.message ?? err).slice(0, 500) }
+              }
+            },
+          }
         }
 
         return {
