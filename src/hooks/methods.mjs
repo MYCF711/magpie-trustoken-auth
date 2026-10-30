@@ -6,7 +6,7 @@
 //   · 没有账号：
 //       ① 「首次使用：下载 AiPy Pro 客户端注册」（问邀请码模式 → 下载链接 → 轮询登录态）
 //       ② 「本机登录（读取 AiPy 会话）」（客户端已经装好的人免下载）
-//       ③ 「手机号登录（无头浏览器）」（已注册的手机号直接登录）
+//       ③ 「手机号登录（可见窗口；滑块验证由用户本人完成）」（已注册的手机号直接登录）
 //
 // 「有没有账号」只能只读 ~/.config/magpie/plugin-auth.json（magpie 不给插件账号列表
 // API，理由与口径见 src/accounts.mjs 文件头）。读不到时保守按「有账号」处理。
@@ -19,10 +19,10 @@
 //
 // 手机号登录流程（无账号时的入口之一）：
 //   1. 用户在 magpie 里填手机号；
-//   2. 插件在后台（headless Chromium）打开 Trustoken 官方登录页；
-//   3. 自动填手机号、勾选协议、填邀请码；
-//   4. 点「获取验证码」→ 自动解滑块 → 短信发出；
-//   5. 用户在 magpie 里填验证码；
+//   2. 插件打开一个**可见**的浏览器窗口（不是后台 headless）打开 Trustoken 官方登录页；
+//   3. 自动填手机号、勾选协议、填邀请码，点「获取验证码」；
+//   4. 页面上要滑块验证时 —— **插件不代解**，由用户本人在这扇窗口里拖（风控验证必须人来过）；
+//   5. 短信发出后，用户在 magpie 里填验证码；
 //   6. 插件自动填验证码、点「立即登录」，捕获登录响应，创建 API Key。
 
 import { createHash, randomBytes } from "node:crypto"
@@ -30,15 +30,16 @@ import { fetchSelf, ensureApiKey } from "../api.mjs"
 import { readTrustokenToken } from "../aipy-local.mjs"
 import { execFileSync } from "node:child_process"
 import { exchangeOAuthCode } from "../oauth.mjs"
-import { launchLoginBrowser, closeSession, evalInPage, solveSlider, dragSlider, waitForOAuthCode } from "../browser-login.mjs"
+import { launchLoginBrowser, closeSession, evalInPage, waitForOAuthCode } from "../browser-login.mjs"
 import { inviteToUse, rollInvite, modeHint, saveInviteChoice, isKnownAccount } from "../invite.mjs"
 import { hasAccounts } from "../accounts.mjs"
 import { defaultGroup, pickGroup, saveGroup, headersFromGroup } from "../header-groups.mjs"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
-const CLIENT_DOWNLOAD_URL = "https://promo.aipyaipy.com/downloads/aipy-pro-2.1.1-x64.exe"
+// 官方下载页（跟着厂商最新版走，不写死任何安装包直链）
+const CLIENT_DOWNLOAD_URL = "https://www.aipyaipy.com/"
 
-function copyToClipboard(text) {
+function copyText(text) {
   try {
     if (process.platform === "win32") {
       execFileSync("powershell.exe", ["-NoProfile", "-NonInteractive", "-Command", `Set-Clipboard -Value '${String(text).replace(/'/g, "''")}'`], { timeout: 5000, windowsHide: true })
@@ -194,11 +195,12 @@ export function makeMethods(c, deps = {}) {
     isKnown: isKnownNow = (uid) => isKnownAccount(uid),
     readToken: readTokenNow = () => readTrustokenToken(),
     fetchSelf: fetchSelfNow = (token, uid) => fetchSelf(token, uid),
+    copyToClipboard: copyClipboard = copyText,
   } = deps
   const out = [
     {
       type: "oauth",
-      label: `${c.PROVIDER_NAME} 手机号登录（无头浏览器）`,
+      label: `${c.PROVIDER_NAME} 手机号登录（短信验证码）`,
       prompts: [
         {
           type: "text",
@@ -229,9 +231,12 @@ export function makeMethods(c, deps = {}) {
 
         let session = null
         try {
-          session = await launchLoginBrowser(authorizeUrl, { headless: true })
-        } catch {
+          // ⚠ 必须**可见**窗口：短信接口会要求滑块验证（风控），而这里**不代解**验证码 ——
+          //   由用户本人在这扇窗口里拖。插件替用户解验证码属于绕过风控，社区 review 明确
+          //   要求删除，已删（连同 browser-login.mjs 里的 canvas 找凹槽 + CDP 拖拽那一套）。
           session = await launchLoginBrowser(authorizeUrl, { headless: false })
+        } catch (e) {
+          throw new Error(`打不开登录窗口（${String(e?.message ?? e).slice(0, 200)}）。可以改用「本机登录（读取 AiPy 会话）」：先在本机 AiPy Pro 客户端里登录要添加的号，再回来导入。`)
         }
 
         try {
@@ -276,25 +281,25 @@ export function makeMethods(c, deps = {}) {
           await evalInPage(session, clickSendExpr())
           await sleep(600)
 
-          // 自动过滑块：最多 15 秒，失败就抛
+          // 等短信发出：等最多 25 秒。**不代解滑块** —— 页面上出现「请拖动滑块完成拼图」时，
+          // 由用户本人在这扇窗口里拖；拖完短信才会发出，然后他把验证码填到 magpie 里。
           let sent = false
-          for (let i = 0; i < 15; i++) {
-            const body = await evalInPage(session, "document.body.innerText")
-            if (!body.includes("请拖动滑块完成拼图")) {
-              if (/验证码发送成功|重新发送|\d+\s*秒后/.test(body)) sent = true
-              break
-            }
-            const sol = await solveSlider(session)
-            if (!sol) { await sleep(800); continue }
-            await dragSlider(session, sol)
-            await sleep(1100)
+          let slider = false
+          let sendError = ""
+          for (let i = 0; i < 25; i++) {
+            const body = await evalInPage(session, "document.body.innerText").catch(() => "")
+            if (/验证码发送成功|重新发送|\d+\s*秒后/.test(body)) { sent = true; break }
+            if (body.includes("请拖动滑块完成拼图")) slider = true
+            const err = body.match(/错误：[^\n]*/)?.[0]
+            if (err || /验证失败|发送失败/.test(body)) { sendError = err || "短信发送失败"; break }
+            await sleep(1000)
           }
-          if (!sent) {
-            const body = await evalInPage(session, "document.body.innerText")
-            if (/验证失败|发送失败|错误：/.test(body)) {
-              throw new Error(body.match(/错误：[^\n]*/)?.[0] || "滑块或短信发送失败")
-            }
+          if (sendError) throw new Error(sendError)
+          if (!sent && !slider) {
+            // 既没发出、也没看到滑块：页面大概停在别处，交给用户在那扇窗口里处理
+            slider = true
           }
+          const needManual = !sent && slider
         } catch (e) {
           await closeSession(session).catch(() => {})
           throw e
@@ -302,11 +307,13 @@ export function makeMethods(c, deps = {}) {
 
         return {
           url: authorizeUrl,
-          // ⚠ 必须是 true：这条链路的浏览器已经由插件自己拉起来了（headless 或降级可见），
-          //    opened:false 会让 magpie 再开一次系统默认浏览器 —— 用户就会看到网页登录页。
+          // ⚠ 必须是 true：这条链路的浏览器已经由插件自己拉起来了（可见窗口），
+          //    opened:false 会让 magpie 再开一次系统默认浏览器 —— 用户就会看到两个登录页。
           opened: true,
           method: "code",
-          instructions: `验证码已发送到 ${maskPhone(phone)}。把短信里的验证码填到下面，插件会自动完成登录。邀请上级：${inviteCode || "无"}。`,
+          instructions: needManual
+            ? `需要你本人在刚打开的浏览器窗口里拖动滑块完成验证（插件不代解验证码）。短信发出后，把收到的验证码填到下面。邀请上级：${inviteCode || "无"}。`
+            : `验证码已发送到 ${maskPhone(phone)}。把短信里的验证码填到下面，插件会自动完成登录。邀请上级：${inviteCode || "无"}。`,
           async callback(code) {
             const c0 = String(code || "").replace(/\D/g, "")
             if (c0.length < 4) return { type: "failed", error: "验证码是 4~8 位数字" }
@@ -422,7 +429,7 @@ export function makeMethods(c, deps = {}) {
 
   // 首次登录 = 下载 AiPy Pro 客户端并在客户端内注册，然后等本机 token 出现。
   // 不再走网页 /api/user/register/mobile（服务端对新号是硬拦截）。
-  // 邀请码先选：0/留空 = 自动，1 = 当前首选；选完再给下载链接。
+  // 邀请码先选：留空 / 0 = 自动（跟随最近登录 / 签到的号），也可直接填一个码；选完再给官方下载页。
   //
   // ⚠ 这条路**只在「本机 0 个账号」时出现**（见函数末尾按 hasAccounts() 拼列表）。
   //   即便 magpie 的 providers 列表缓存还是旧的、把这个入口显示给了有账号的人，
@@ -461,7 +468,7 @@ export function makeMethods(c, deps = {}) {
       saveInviteChoice(inputs?.invite)
       const code = inviteToUse()
       const url = CLIENT_DOWNLOAD_URL
-      copyToClipboard(code)
+      copyClipboard(code)
       const first = await readTokenNow().catch(() => null)
       const firstToken = first?.access_token || ""
       return {
@@ -469,8 +476,8 @@ export function makeMethods(c, deps = {}) {
         opened: false,
         method: "auto",
         instructions: `邀请码 ${code} 已复制到剪贴板。
-下载安装包后，在 AiPy Pro 客户端里用新手机号完成首次注册；登录成功后这个窗口会自动导入登录态，不用再回来点任何东西。
-下载链接：${url}`,
+到官方下载页装好 AiPy Pro，在客户端里用新手机号完成首次注册；登录成功后这个窗口会自动导入登录态，不用再回来点任何东西。
+官方下载页：${url}`,
         async callback() {
           const deadline = Date.now() + 10 * 60 * 1000
           while (Date.now() < deadline) {

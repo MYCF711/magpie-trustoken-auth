@@ -1,7 +1,14 @@
-// 每个账号一组「请求头构成的信息源」：安装渠道 referral + 版本/平台 + 自己的邀请码
+// 每个账号一组「客户端请求头」：安装渠道 referral + 版本 / 平台
 //
-// 请求头不是写死的：默认取 189 账号那一组（本地 AiPy 的 referral 文件 + 189 的
-// aff_code），登录新号成功后把新号这一组落盘，按 uid 绑定。
+// ⚠ 这里**不放任何账号身份**。
+//   旧版本的 defaultGroup() 在没有账号信息时把 uid / accountId 写死成维护者自己的账号
+//   （写死成维护者自己账号的 uid / accountId），社区 review 明确指出那是「别人的账号身份」，已删。
+//   现在 defaultGroup() 只给**客户端身份**（版本 / 平台 / 安装渠道）；某个账号自己那组
+//   只在**这个账号真的登录过**之后由 saveGroup() 落盘、按 uid 取用 —— 取不到就用默认组，
+//   绝不拿别人的账号顶上。
+//
+//   注：headersFromGroup() 从来只发 referral / 版本 / 平台，uid / accountId / affCode
+//   都**不上网**，它们只是本地台账的键（所以「默认组」没有账号身份也不影响请求）。
 
 import { existsSync, mkdirSync, readFileSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
@@ -18,6 +25,7 @@ function writeJson(file, value) {
   try { mkdirSync(dirname(file), { recursive: true }); writeFileSync(file, JSON.stringify(value)); return true } catch { return false }
 }
 
+/** 本机 AiPy 安装时带的渠道码（用户自己机器上的那份文件，不是别人的账号） */
 export function readReferral() {
   try {
     const p = join(APPDATA(), "aipy-pro", "referral")
@@ -26,32 +34,24 @@ export function readReferral() {
   } catch { return "" }
 }
 
-function read189Auth() {
-  try {
-    const p = join(homedir(), ".config", "magpie", "plugin-auth.json")
-    const all = JSON.parse(readFileSync(p, "utf8"))
-    for (const [k, v] of Object.entries(all || {})) {
-      if (k === "trustoken" || k.startsWith("trustoken#")) {
-        if (v?.accountId && String(v.accountId).startsWith("189")) return v
-      }
-    }
-    const first = Object.entries(all || {}).find(([k]) => k === "trustoken" || k.startsWith("trustoken#"))
-    return first?.[1] || null
-  } catch { return null }
-}
-
 export function readGroups() {
   const v = readJson(FILE(), {})
   return v && typeof v === "object" ? v : {}
 }
 
+/**
+ * 默认请求头组：**只有客户端身份，没有账号身份**。
+ *
+ * 旧文件里那份带 uid / accountId 的默认组（写死的维护者账号）在这里被丢掉重建 ——
+ * 本机已有安装也会自愈。
+ */
 export function defaultGroup() {
   const all = readGroups()
-  if (all.default) return all.default
-  const auth = read189Auth()
+  const d = all.default
+  if (d && typeof d === "object" && !d.uid && !d.accountId) return d
   const g = {
-    uid: String(auth?.uid || "182238"),
-    accountId: String(auth?.accountId || "189****8051"),
+    uid: "",
+    accountId: "",
     referral: readReferral(),
     version: "2.1.1",
     appVersion: "0.5.0",
@@ -65,12 +65,13 @@ export function defaultGroup() {
   return g
 }
 
+/** 某个账号自己的组（只有真的登录过才有）；没有就退回默认组 */
 export function groupFor(uid) {
   const all = readGroups()
   return (uid && all.accounts?.[String(uid)]) || defaultGroup()
 }
 
-/** 按邀请策略选这次注册用的 header 组：首选 → 该账号组；自动 → 滚动码所属账号组，没有则 189 默认组 */
+/** 按邀请策略选这次注册用的 header 组：显式指定的账号 → 滚动码所属账号 → 默认组 */
 export function pickGroup() {
   const pol = readInvitePolicy()
   const all = readGroups()
@@ -85,6 +86,7 @@ export function pickGroup() {
   return defaultGroup()
 }
 
+/** 登录成功时把「这个账号自己的组」落盘（uid/accountId 一律来自真实登录结果） */
 export function saveGroup({ uid, accountId, affCode, referral, version, appVersion, platform, arch }) {
   if (!uid) return
   const all = readGroups()
@@ -101,11 +103,12 @@ export function saveGroup({ uid, accountId, affCode, referral, version, appVersi
   }
   all.accounts = all.accounts || {}
   all.accounts[g.uid] = g
-  if (!all.default) all.default = g
+  if (!all.default || all.default.uid || all.default.accountId) all.default = g
   writeJson(FILE(), all)
   return g
 }
 
+/** 真正上网的那几个头：只发客户端身份，不带账号身份、不带邀请码 */
 export function headersFromGroup(g) {
   if (!g) return {}
   return {

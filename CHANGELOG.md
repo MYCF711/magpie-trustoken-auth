@@ -1,3 +1,14 @@
+## 0.3.5
+
+合规整改 —— `magpie-community/plugins` 收录 PR #527 的 review。收录被拒可以接受（Trustoken 是中转站），但 review 指出的插件自身问题必须修。主人的口径：**推荐码可以带，账号身份不能带。**
+
+- fix: `src/header-groups.mjs` 的 `defaultGroup()` 不再在「本地没有账号信息」时写死 `uid: "182238" / accountId: "189****8051"`（维护者自己的账号身份），改成**空身份**的客户端组；旧版本落盘过的那份带身份的默认组会被丢掉重建（已有安装自愈）。同时删掉 `read189Auth()`（按手机号前缀从 magpie 账号表挑账号借身份）。
+- fix: 删掉 `src/invite.mjs` 的 `preferredInvite()` —— 它直接解析 magpie 的 `logins.json` + `plugin-auth.json` 去认「magpie 首选账号」。**这个功能保不住**：magpie 的钩子（`getAuth()`）只给当前账号，拿不到「哪个账号是首选」。邀请码只剩两种来源：用户显式填的码、滚动码（最近登录 / 签到的账号自己的码，由 `rollInvite()` 用该账号 token 在钩子里记下）。登录弹窗提示同步改为「留空 = 自动；也可直接填一个邀请码」。`AUTHOR_INVITE`（维护者自己的推荐码）按新口径保留，仍可用 `TRUSTOKEN_INVITE` 覆盖。
+- fix: `auth.checkin` 不再刷厂商推广 —— 删掉「用最低价模型补每日任务」的全部逻辑（读本机 AiPy key / 端口 → `POST /api/aipy/createTask` 批量建任务；再发一批带假任务头的 filler 请求）。现在只做：签到 + 领服务端**已经标成 `claimable`** 的奖励。`src/aipy-local.mjs` 只留只读的 `readTrustokenToken()`，建任务那半整段删除；`scripts/aipy-daily.mjs` 改成「看进度 + 领已到手的奖励」。
+- fix: 下载入口不再写死 `aipy-pro-2.1.1-x64.exe`，改跳官方下载页 `https://www.aipyaipy.com/`。
+- fix: **删除自动解滑块**（`SOLVE_SLIDER` / `cdpInput` / `solveSlider` / `dragSlider`，以及 `waitForLogin()` 里的自动拖拽分支）—— 代替用户完成风控验证属于绕过风控。手机号登录改为打开**可见**窗口：出现滑块时提示用户本人拖动，短信发出后再填验证码。
+- test: 新增 `tests/compliance.test.mjs` 5 条（源码锁 + 行为测）覆盖上述五条：推荐码可带 / 账号身份不可带、不读 magpie 私有账号文件、不刷推广任务、下载跳官方页、不代解验证码。
+
 ## 0.3.4 — 2026-10-30
 
 - **重新发布**：0.3.3 在 npm 侧卡在一个 staged 状态（registry 查 404，但 publish 报 409 "Cannot publish over previously staged version"），代码相同，改以 0.3.4 发布。功能与 0.3.3 完全一致：登录入口按「本机是否已有账号」自动分流
