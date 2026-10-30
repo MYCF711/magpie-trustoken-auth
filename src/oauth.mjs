@@ -36,10 +36,14 @@ function pkce() {
   return makePkce()
 }
 
-/** 拼 /api/oauth/authorize 的地址（注册流程用 aipy-pro://oauth 回调） */
-export function authorizeUrlFor(challenge, redirectUri = AIPY_REDIRECT_URI) {
+/** 拼 /api/oauth/authorize 的地址（注册流程用 aipy-pro://oauth 回调）。
+ *
+ * `aff` 是邀请码：新号注册时服务端会把它记成注册来源；不传就等于没有邀请人。
+ * 旧的本机回调流程 `beginOAuth` 一直带这个参数，注册流程最初漏了——补上。
+ */
+export function authorizeUrlFor(challenge, redirectUri = AIPY_REDIRECT_URI, aff = "") {
   const u = new URL(`${WEB}/api/oauth/authorize`)
-  u.search = new URLSearchParams({
+  const params = {
     code_challenge: challenge,
     code_challenge_method: "S256",
     response_type: "code",
@@ -47,7 +51,9 @@ export function authorizeUrlFor(challenge, redirectUri = AIPY_REDIRECT_URI) {
     scope: SCOPE,
     client_id: CLIENT_ID,
     lang: "zh",
-  }).toString()
+  }
+  if (aff) params.aff = aff
+  u.search = new URLSearchParams(params).toString()
   return u.toString()
 }
 
