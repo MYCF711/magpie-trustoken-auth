@@ -1,14 +1,29 @@
-// ② auth.methods[] —— 一个入口：无头浏览器内置登录
+// ② auth.methods[] —— 登录 / 添加账号的入口，按「本机有没有该供应商账号」自动分流
 //
-// 流程：
+//   · 有账号（plugin-auth.json 里有 trustoken / trustoken#…）：
+//       只留一个「本机登录（读取 AiPy 会话）」—— 点一下就把 AiPy Pro 客户端里
+//       已经登录的号导入 magpie，无输入、无选择页。
+//   · 没有账号：
+//       ① 「首次使用：下载 AiPy Pro 客户端注册」（问邀请码模式 → 下载链接 → 轮询登录态）
+//       ② 「本机登录（读取 AiPy 会话）」（客户端已经装好的人免下载）
+//       ③ 「手机号登录（无头浏览器）」（已注册的手机号直接登录）
+//
+// 「有没有账号」只能只读 ~/.config/magpie/plugin-auth.json（magpie 不给插件账号列表
+// API，理由与口径见 src/accounts.mjs 文件头）。读不到时保守按「有账号」处理。
+//
+// ⚠ label 一律稳定文案（magpie 在插件加载时读走并缓存，见 magicrew AGENTS 坑 31）；
+//   动态信息（邀请码、本次会做什么）全部放进 authorize() 返回的 instructions。
+// ⚠ 列表层是按账号状态现算的（index.mjs 的 `get methods()` + magpie 每次 providers RPC
+//   都会读 auth.methods）；但**行为层还有第二道兜底** —— 下载入口的 authorize() 会
+//   再判一次账号，有账号时绝不返回下载链接。
+//
+// 手机号登录流程（无账号时的入口之一）：
 //   1. 用户在 magpie 里填手机号；
 //   2. 插件在后台（headless Chromium）打开 Trustoken 官方登录页；
 //   3. 自动填手机号、勾选协议、填邀请码；
 //   4. 点「获取验证码」→ 自动解滑块 → 短信发出；
 //   5. 用户在 magpie 里填验证码；
 //   6. 插件自动填验证码、点「立即登录」，捕获登录响应，创建 API Key。
-//
-// 浏览器全程不弹窗（headless）；滑块由 solveSlider/dragSlider 在页面里完成。
 
 import { createHash, randomBytes } from "node:crypto"
 import { fetchSelf, ensureApiKey } from "../api.mjs"
@@ -17,6 +32,7 @@ import { execFileSync } from "node:child_process"
 import { exchangeOAuthCode } from "../oauth.mjs"
 import { launchLoginBrowser, closeSession, evalInPage, solveSlider, dragSlider, waitForOAuthCode } from "../browser-login.mjs"
 import { inviteToUse, rollInvite, modeHint, saveInviteChoice, isKnownAccount } from "../invite.mjs"
+import { hasAccounts } from "../accounts.mjs"
 import { defaultGroup, pickGroup, saveGroup, headersFromGroup } from "../header-groups.mjs"
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
@@ -170,7 +186,15 @@ async function completeSignIn(c, data, meta = {}) {
   }
 }
 
-export function makeMethods(c) {
+export function makeMethods(c, deps = {}) {
+  // 依赖可注入是给测试用的：入口集合必须能按「本机有没有该供应商账号」现算，
+  // 测试不该去读这台机器真实的 plugin-auth.json / AiPy 客户端。
+  const {
+    hasAccounts: hasAccountsNow = () => hasAccounts(c.PROVIDER),
+    isKnown: isKnownNow = (uid) => isKnownAccount(uid),
+    readToken: readTokenNow = () => readTrustokenToken(),
+    fetchSelf: fetchSelfNow = (token, uid) => fetchSelf(token, uid),
+  } = deps
   const out = [
     {
       type: "oauth",
@@ -361,19 +385,31 @@ export function makeMethods(c) {
       keyless: true,
       label: `${c.PROVIDER_NAME} 本机登录（读取 AiPy 会话）`,
       async authorize() {
-        const tok = await readTrustokenToken()
-        if (!tok?.access_token) throw new Error("本机没有 AiPy 登录态：先在 AiPy Pro 客户端登录这个手机号")
-        const self = await fetchSelf(tok.access_token, "")
+        const tok = await readTokenNow()
+        if (!tok?.access_token) {
+          throw new Error(
+            "本机没有 AiPy 登录态：请先在 AiPy Pro 客户端登录要添加的手机号，再回来点「本机登录（读取 AiPy 会话）」。首次使用才需要下载客户端。",
+          )
+        }
+        const self = await fetchSelfNow(tok.access_token, "")
         const uid = self?.id
         if (!uid) throw new Error("AiPy 会话无效：/api/user/self 没有返回用户")
+        const accountId = maskPhone(self?.username) || String(uid)
+        // 查重：客户端还停在一个已经在 magpie 里的号上时，别让用户以为「新号加上了」。
+        // magpie 的 settle 遇到同 accountId+uid 是替换旧账号，不查重就是静默没变化。
+        if (isKnownNow(uid)) {
+          throw new Error(
+            `本机 AiPy 当前登录的是 ${accountId}，这个号已经在 magpie 里了。要添加新号：先在 AiPy Pro 客户端切换到那个号，再点一次「本机登录（读取 AiPy 会话）」。`,
+          )
+        }
         const apiKey = await ensureApiKey(tok.access_token, uid)
-        await rollInvite({ accountToken: tok.access_token, uid, accountId: maskPhone(self?.username) || String(uid) }, { roll: false })
+        await rollInvite({ accountToken: tok.access_token, uid, accountId }, { roll: false })
         return {
           type: "success",
           access: apiKey,
           refresh: tok.access_token,
           expires: Number(tok.expires_at) || Date.now() + 30 * 86400e3,
-          accountId: maskPhone(self?.username) || String(uid),
+          accountId,
           uid: String(uid),
           apiKey,
           accountToken: tok.access_token,
@@ -387,30 +423,46 @@ export function makeMethods(c) {
   // 首次登录 = 下载 AiPy Pro 客户端并在客户端内注册，然后等本机 token 出现。
   // 不再走网页 /api/user/register/mobile（服务端对新号是硬拦截）。
   // 邀请码先选：0/留空 = 自动，1 = 当前首选；选完再给下载链接。
+  //
+  // ⚠ 这条路**只在「本机 0 个账号」时出现**（见函数末尾按 hasAccounts() 拼列表）。
+  //   即便 magpie 的 providers 列表缓存还是旧的、把这个入口显示给了有账号的人，
+  //   authorize() 里也会再判一次：有账号就**绝不返回下载链接**，直接给「请走本机登录」。
+  //   这就是「缓存不刷新，行为层兜底仍然正确」的那一层。
   const firstLoginMethod = {
     type: "oauth",
-    label: `复制邀请码（${inviteToUse()}）并下载客户端登录`,
-    get prompts() {
-      return [
-        { type: "text", key: "invite", message: "邀请码", placeholder: modeHint() },
-        { type: "text", key: "download", message: "安装包下载链接（可复制）", placeholder: CLIENT_DOWNLOAD_URL },
-      ]
-    },
+    // label 必须是稳定文案：magpie 在插件加载时把 methods[].label 读走缓存，
+    // 动态邀请码放进 authorize 的 instructions（magicrew AGENTS 坑 31）。
+    label: `${c.PROVIDER_NAME} 首次使用：下载 AiPy Pro 客户端注册`,
     async ask(inputs) {
+      // 有账号 → 一个问题都不问（理论上这个入口不会出现，兜住旧缓存）
+      if (hasAccountsNow()) return null
       if (!inputs || !Object.prototype.hasOwnProperty.call(inputs, "invite")) {
         return { type: "text", key: "invite", message: "邀请码", placeholder: modeHint() }
-      }
-      if (!Object.prototype.hasOwnProperty.call(inputs, "download")) {
-        return { type: "text", key: "download", message: "安装包下载链接（可复制）", placeholder: CLIENT_DOWNLOAD_URL }
       }
       return null
     },
     async authorize(inputs) {
+      // 行为层兜底：有账号时绝不再走下载（详见上面的注释）
+      if (hasAccountsNow()) {
+        return {
+          url: "",
+          opened: true,
+          method: "auto",
+          instructions: "你已经有 Trustoken 账号了：这次不会再走下载安装。",
+          async callback() {
+            return {
+              type: "failed",
+              error:
+                "你已经有 Trustoken 账号了：请在 AiPy Pro 客户端登录要添加的号，再用「本机登录（读取 AiPy 会话）」导入；下载入口只给还没有账号的人。",
+            }
+          },
+        }
+      }
       saveInviteChoice(inputs?.invite)
       const code = inviteToUse()
-      const url = String(inputs?.download || "").trim() || CLIENT_DOWNLOAD_URL
+      const url = CLIENT_DOWNLOAD_URL
       copyToClipboard(code)
-      const first = await readTrustokenToken().catch(() => null)
+      const first = await readTokenNow().catch(() => null)
       const firstToken = first?.access_token || ""
       return {
         url,
@@ -422,7 +474,7 @@ export function makeMethods(c) {
         async callback() {
           const deadline = Date.now() + 10 * 60 * 1000
           while (Date.now() < deadline) {
-            const tok = await readTrustokenToken().catch(() => null)
+            const tok = await readTokenNow().catch(() => null)
             if (tok?.access_token && tok.access_token !== firstToken) {
               return await completeSignIn(c, { access_token: tok.access_token, refresh_token: tok.refresh_token || tok.access_token }, { group: defaultGroup(), affCode: code })
             }
@@ -433,26 +485,12 @@ export function makeMethods(c) {
       }
     },
   }
-  out.push(firstLoginMethod)
 
-  // 邀请码按钮：0/留空 = 自动（作者码/滚动码），1 = 当前首选账号。
-  // 保存后再走手机号验证码，注册时读到的就是刚选的码。
-  out.push({
-    type: "oauth",
-    label: `${c.PROVIDER_NAME} 邀请码`,
-    get prompts() {
-      return [{ type: "text", key: "invite", message: "邀请码", placeholder: modeHint() }]
-    },
-    async ask(inputs) {
-      if (!inputs || !Object.prototype.hasOwnProperty.call(inputs, "invite")) {
-        return { type: "text", key: "invite", message: "邀请码", placeholder: modeHint() }
-      }
-      return firstLoginMethod.ask(inputs)
-    },
-    async authorize(inputs) {
-      saveInviteChoice(inputs?.invite)
-      return await firstLoginMethod.authorize(inputs)
-    },
-  })
-  return out
+  // 入口集合按「本机有没有该供应商的账号」现算：
+  //   有账号（≥1）→ 只留「本机登录」一条：主人原话「有账号就直接走软件登录」，不要再弹下载。
+  //   没有账号     → 才露出「首次使用：下载客户端注册」，外加本机登录（客户端已装的人免下载）
+  //                 和手机号登录（已注册的号）。
+  // out = [手机号登录, 本机登录]
+  if (hasAccountsNow()) return [out[1]]
+  return [firstLoginMethod, out[1], out[0]]
 }
