@@ -43,6 +43,10 @@ test("① PKCE：verifier 43 字符，challenge = SHA256(verifier) 的 base64url
   assert.equal(url.searchParams.get("code_challenge_method"), "S256")
   assert.equal(url.searchParams.get("redirect_uri"), AIPY_REDIRECT_URI)
   assert.equal(url.searchParams.get("client_id"), "aipy-pro")
+  // 0.3.8：邀请码通过 aff 参数带进授权链（新号注册时服务端记注册来源）
+  const withAff = new URL(authorizeUrlFor(challenge, AIPY_REDIRECT_URI, "Chdr"))
+  assert.equal(withAff.searchParams.get("aff"), "Chdr", "aff 参数必须能带上邀请码")
+  assert.equal(new URL(authorizeUrlFor(challenge)).searchParams.get("aff"), null, "不传 aff 时不要出现空参数")
 })
 
 test("② UA 必须是 AiPy 客户端同款（服务端只认 aipy-pro/*）", () => {
