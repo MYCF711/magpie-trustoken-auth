@@ -19,7 +19,7 @@ import { execFileSync, spawn } from "node:child_process"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { createServer } from "node:net"
 import { homedir } from "node:os"
-import { basename, join } from "node:path"
+import { basename, join, win32 as pathWin32 } from "node:path"
 
 // 用户显式指定的浏览器路径（分号分隔可给多个）。名字跟 magpie 生态的报错文案统一：
 // 用户照任何一处提示设了 MAGPIE_LINGXI_BROWSER，插件就必须认它，否则教了也白教。
@@ -31,9 +31,9 @@ function envBrowserOverride(env) {
     if (!raw) continue
     return raw
       .split(";")
-      .map((s) => s.trim())
+      .map((s) => s.trim().replace(/^"(.*)"$/, "$1").trim())
       .filter(Boolean)
-      .map((p) => ({ name: basename(p).replace(/\.exe$/i, ""), path: p }))
+      .map((p) => ({ name: basename(String(p).split("\\").join("/")).replace(/\.exe$/i, ""), path: p }))
   }
   return []
 }
@@ -57,30 +57,31 @@ const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 /** win32 固定候选路径（不做存在性过滤，纯函数方便测试锁形状） */
 export function winBrowserCandidatePaths(env = process.env) {
-  const pf = env.ProgramFiles || "C:\\Program Files"
-  const pf86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)"
+  const pf = env.ProgramFiles || "C:\Program Files"
+  const pf86 = env["ProgramFiles(x86)"] || "C:\Program Files (x86)"
   const local = env.LOCALAPPDATA || ""
   const home = env.USERPROFILE || homedir()
-  const edgeDirs = [pf86, pf].map((d) => join(d, "Microsoft", "Edge", "Application"))
+  const wjoin = pathWin32.join // Windows 路径必须用 win32 语义拼，ubuntu CI 上也要得到反斜杠
+  const edgeDirs = [pf86, pf].map((d) => wjoin(d, "Microsoft", "Edge", "Application"))
   return [
     // Chrome 标准三处（系统 / x86 / 每用户）
-    { name: "Chrome", path: join(pf, "Google", "Chrome", "Application", "chrome.exe") },
-    { name: "Chrome", path: join(pf86, "Google", "Chrome", "Application", "chrome.exe") },
-    ...(local ? [{ name: "Chrome", path: join(local, "Google", "Chrome", "Application", "chrome.exe") }] : []),
+    { name: "Chrome", path: wjoin(pf, "Google", "Chrome", "Application", "chrome.exe") },
+    { name: "Chrome", path: wjoin(pf86, "Google", "Chrome", "Application", "chrome.exe") },
+    ...(local ? [{ name: "Chrome", path: wjoin(local, "Google", "Chrome", "Application", "chrome.exe") }] : []),
     // Edge：主程序可能是 msedge.exe，也可能是 "Microsoft Edge.exe"（2026-10-31 实测，
     // 该机注册表 App Paths\msedge.exe 指向后者 —— 只查 msedge.exe 会整个落空）
     ...edgeDirs.flatMap((d) => [
-      { name: "Edge", path: join(d, "msedge.exe") },
-      { name: "Edge", path: join(d, "Microsoft Edge.exe") },
+      { name: "Edge", path: wjoin(d, "msedge.exe") },
+      { name: "Edge", path: wjoin(d, "Microsoft Edge.exe") },
     ]),
     // Chromium 每用户安装
-    ...(local ? [{ name: "Chromium", path: join(local, "Chromium", "Application", "chrome.exe") }] : []),
+    ...(local ? [{ name: "Chromium", path: wjoin(local, "Chromium", "Application", "chrome.exe") }] : []),
     // scoop（shims 里的转发 exe 可直接 spawn，参数透传）
-    { name: "Chromium(scoop)", path: join(home, "scoop", "shims", "chromium.exe") },
-    { name: "Chrome(scoop)", path: join(home, "scoop", "shims", "chrome.exe") },
+    { name: "Chromium(scoop)", path: wjoin(home, "scoop", "shims", "chromium.exe") },
+    { name: "Chrome(scoop)", path: wjoin(home, "scoop", "shims", "chrome.exe") },
     // Brave / 360极速（报错文案里点过名的，顺手兜住）
-    { name: "Brave", path: join(pf, "BraveSoftware", "Brave-Browser", "Application", "brave.exe") },
-    { name: "360极速", path: join(pf86, "360Chrome", "Chrome", "Application", "360chrome.exe") },
+    { name: "Brave", path: wjoin(pf, "BraveSoftware", "Brave-Browser", "Application", "brave.exe") },
+    { name: "360极速", path: wjoin(pf86, "360Chrome", "Chrome", "Application", "360chrome.exe") },
   ]
 }
 
@@ -95,7 +96,7 @@ export function winPathCandidatePaths(env = process.env) {
   const out = []
   for (const dir of dirs) {
     for (const exe of exes) {
-      out.push({ name: exe.replace(/\.exe$/i, ""), path: join(dir, exe) })
+      out.push({ name: exe.replace(/\.exe$/i, ""), path: pathWin32.join(dir, exe) })
     }
   }
   return out
