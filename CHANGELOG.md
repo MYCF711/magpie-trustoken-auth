@@ -1,3 +1,11 @@
+## 0.3.3
+
+- feat: 添加账号按「本机有没有 Trustoken 账号」自动分流（读 `~/.config/magpie/plugin-auth.json` 的 `trustoken` / `trustoken#…`，只读）：**有账号 → 只留「本机登录（读取 AiPy 会话）」一个入口**，点一下就把 AiPy Pro 客户端里登录的号导入 magpie，无输入、无选择页；**0 账号 → 才出现**「首次使用：下载 AiPy Pro 客户端注册」（邀请码模式 → 下载链接 → 自动等登录态）+「本机登录」+「手机号登录」。有账号时不再弹下载安装包连接。
+- fix: 删掉重复的「邀请码」入口（原来和下载入口 100% 同一实现）；删掉下载流程里手填「安装包下载链接」的输入框（用户不需要填 URL，链接直接放进 instructions）。
+- fix: `methods[].label` 全部改成稳定文案 —— 原先 label 里拼了 `inviteToUse()` 的动态邀请码，会被 magpie 在插件加载时缓存住、永远显示旧码（magicrew AGENTS 坑 31 同族）；动态邀请码改到 `authorize()` 的 `instructions` 现算。
+- fix: 「本机登录」查重：当前客户端登录的号已经在 magpie 里时明确报错并要求先在客户端切换，不再静默替换旧账号。
+- test: 新增 `tests/login-methods.test.mjs` 5 条 —— 入口集合（0 账号 3 个 / 有账号 1 个）、`hasAccounts` 文件口径（含坏 JSON 保守按有账号）、**旧缓存下下载入口的行为层兜底（绝不返回下载链接）**、本机登录的两种明确报错、label 去动态化。
+
 ## 0.3.2
 
 - fix: 上游用 400 报「渠道自己坏了」（`bad response status code 400`）时，magpie 的 `retryable()` 不认这句话 ⇒ 不换号、400 直接摔给客户端，整个会话被它打断。`auth.loader` 现在带一个 `fetch`，按语义把 400/422 翻译成 magpie 认得的状态码：钱（灵石/积分/点数/余额/额度/欠费/充值/insufficient balance…）→ **402**；渠道坏了（`bad response status code` / `bad_response_status_code` / 无可用渠道）→ **502**；模型不存在/未开通/无权 → **404**；400 里明说「每分钟/每秒」的限流 → **429**。上下文过长与请求格式错误（`invalid_text_request`）**原样放行** —— 换号一样失败，还会把「该压缩上下文」的信号弄丢。

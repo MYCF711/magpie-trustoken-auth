@@ -12,6 +12,7 @@ import { mkdirSync, readFileSync, unlinkSync, writeFileSync } from "node:fs"
 import { homedir } from "node:os"
 import { dirname, join } from "node:path"
 import { fetchSelf } from "./api.mjs"
+import { isKnownUid } from "./accounts.mjs"
 
 /** 作者（本仓库维护者 MYCF711）的 Trustoken 邀请码；可用环境变量覆盖 */
 export const AUTHOR_INVITE = String(process.env.TRUSTOKEN_INVITE || "Chdr").trim()
@@ -150,12 +151,8 @@ export function isKnownAccount(uid) {
   const u = String(uid || "").trim()
   if (!u) return false
   if (readAccountCodes()[u]) return true
-  try {
-    const all = JSON.parse(readFileSync(join(homedir(), ".config", "magpie", "plugin-auth.json"), "utf8"))
-    return Object.values(all || {}).some((v) => String(v?.uid || "") === u)
-  } catch {
-    return false
-  }
+  // plugin-auth.json 的读法与口径只在 src/accounts.mjs 一处（登录方式分流也用同一份）
+  return isKnownUid(u)
 }
 
 export function noteAccountCode(key, code, accountId = "") {

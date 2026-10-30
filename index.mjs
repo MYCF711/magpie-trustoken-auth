@@ -32,7 +32,12 @@ function buildPlugin(c) {
         maxConcurrency: 4,
         refreshLead: REFRESH_LEAD_MS,
 
-        methods: makeMethods(c),
+        // getter：每次 magpie 问 providers 都按「本机有没有账号」重新算登录入口
+        // （host.js:1881 的 methods(auth) 每次 RPC 都会读 auth.methods）。
+        // 即便某个 magpie 版本把列表缓存住了，下载入口的 authorize() 里还有行为层兜底。
+        get methods() {
+          return makeMethods(c)
+        },
         refresh: makeRefresh(c),
         loader: makeLoader(c),
         usage: makeUsage(c),
