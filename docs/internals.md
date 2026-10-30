@@ -75,6 +75,27 @@ used_quota 差值 = prompt_tokens × a + completion_tokens × b
 
 结论：trustoken 的「AI 任务」= **AiPy Pro 的一个任务（会话）**，而且必须是 AiPy Pro 客户端自己创建/执行的任务（`aipyapp` 直接跑不算）。
 
+### 5.1 `locked` 是「未开始」的正常初始态（0.3.14 实测）
+
+2026-10-31 凌晨（签到窗口外）本机 5 个号全部是 `locked`：
+
+```
+daily_ai_1: 0/1 locked   daily_ai_5: 0/5 locked
+```
+
+从 AiPy Pro 启动后手动 `ensureAipyTasks({n:1, model:"qwen3.8-flash"})`，**10 秒内**：
+
+```
+daily_ai_1: 0/1 locked → claimable 1/1
+daily_ai_5: 0/5 locked → in_progress 1/5
+```
+
+⇒ **`locked` = 今天还没开始做，不是「锁死」**；建一个 AiPy 任务就能推进。前端 bundle 的 `Jb`
+组件同样把 `locked` 落到「去完成」分支（点击 `window.aipy.send("browser:navigate", "/")` 打开 AiPy 主界面）。
+
+⇒ 插件 `gaps` 过滤必须同时认 `in_progress` 和 `locked`（旧代码只认 `in_progress`，导致
+`ensureAipyTasks` 一次都不触发）。判据：`tests/checkin-tasks.test.mjs` 5 条。
+
 ### AiPy 本机 API
 
 ```
@@ -93,7 +114,7 @@ Content-Type: application/json
 
 插件因此在 `auth.checkin` 里：
 1. 领取 `claimable` 的任务奖励；
-2. 用 `qwen3.8-flash` 通过 AiPy 本机 API 创建 gap 个任务（会话）；
+2. 用 `qwen3.8-flash` 通过 AiPy 本机 API 创建 gap（`in_progress` 或 `locked` 且未达标）个任务（会话）；
 3. 等结算后再领一次；
 4. AiPy 没运行时降级为纯 API 补发（无效），并在 message 里如实说明。
 
