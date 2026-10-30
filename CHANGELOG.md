@@ -1,3 +1,9 @@
+## 0.3.11 — 2026-10-31
+
+- **修复：弹窗注册报「没找到 Chromium 内核浏览器」，但机器上明明装了浏览器** —— 旧的 `browserCandidates()` 在 Windows 只查 5 条写死路径（Program Files / LOCALAPPDATA 下的 Chrome、Edge 的 `msedge.exe`），三处盲区全踩：① scoop 安装的 Chromium（`%USERPROFILE%\scoop\shims\chromium.exe`，且 scoop 会把 shims 加进 PATH，Windows 分支却完全不扫 PATH —— linux 分支用 `command -v` 扫了，Windows 漏了）；② 本机 Edge 主程序叫 `Microsoft Edge.exe` 而不是 `msedge.exe`（注册表 `App Paths\msedge.exe` 证实）；③ 用户照 magpie 生态文案设的 `MAGPIE_LINGXI_BROWSER` 环境变量插件根本不认。现在按优先级：**env 覆盖（`MAGPIE_LINGXI_BROWSER` / `MAGPIE_TRUSTOKEN_BROWSER`，分号分隔、不过滤存在性）→ 固定路径（Edge 双文件名 + scoop shim + Chromium 每用户 + Brave/360极速）→ Windows PATH 扫描 → 注册表 App Paths 兜底**。本机实测命中 Edge（改名）与 scoop Chromium 两个候选。
+- test: 新增 `tests/browser-candidates.test.mjs` 10 条（env 覆盖三态、Edge 双名、PATH 扫描含引号/相对路径丢弃、App Paths 兜底触发与跳过、去重、本机 scoop 回归锁）。
+- 报错文案与生态统一：找不到浏览器时教用户设 `MAGPIE_LINGXI_BROWSER`（原「本机没找到 Chrome / Edge」对用户没有出路）。
+
 ## 0.3.10 — 2026-10-30
 
 - **邀请码改成插件选项开关**（学 magicrew 的 `auth.options` 形式）：`auth.options: [{ key: "invite-first", label: "邀请码固定不滚动", description: "...", default: false }]`。开 = 新号注册固定用当前码（有 fixed/custom 记录就用它，否则作者码 `Chdr`）；关（默认）= 跟随最后一个登录 / 签到的账号的滚动码。magpie 的 `PluginOptions` 是 `map[string]map[string]bool`，只支持布尔，所以做不了「下拉选账号」。
