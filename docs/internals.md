@@ -489,3 +489,28 @@ shim 在 `%USERPROFILE%\scoop\shims\chromium.exe`）和 Edge，弹窗注册却�
   Chrome / Edge」没有出路）。
 - **判据**：`tests/browser-candidates.test.mjs` 10 条；本机实测命中两个候选：
   Edge（`Microsoft Edge.exe`，改名场景）+ `%USERPROFILE%\scoop\shims\chromium.exe`。
+
+
+### 14.8 打不开受控浏览器时的回退（0.3.11，主人 2026-10-31 要求）
+
+`launchLoginWindow()` 失败（一个 Chromium 内核浏览器都没有 / 起窗口失败）时，
+`authorize()` 不再只报错，而是返回回退：
+
+```
+{
+  url: <登录网址>,        // authorizeUrlFor(challenge, undefined, inviteCode)
+  opened: false,          // magpie 的 plugins.go:788 `if !st.Opened { open(st.URL) }` → 系统浏览器打开
+  method: "code",         // 允许用户把 aipy-pro://oauth?code=... 粘回来
+  instructions: "没能启动受控浏览器（原因）。登录网址（已复制到剪贴板）：<URL> ..."
+}
+```
+
+- **复制按钮**：magpie 的 instructions 是纯文本，没有按钮协议；插件在 `authorize()` 里主动
+  `copyToClipboard(url)`（失败也吞掉，不影响回退），instructions 写明「已复制到剪贴板」。
+- **登录态怎么拿回来（结论）**：系统浏览器这条路**拿不到 session cookie**，所以**通常不会自动导入**——
+  instructions 必须如实写明，不能假装能自动接上。唯一的补救：如果浏览器最终跳到
+  `aipy-pro://oauth?code=...`（或用户能从地址栏/历史里复制到这段），把它粘回 magpie，
+  插件用**这次落盘的 verifier** 走 `exchangeOAuthCode()` 换 token（code 与 verifier 是配对的）；
+  否则只能改用「本机登录（读取 AiPy 会话）」。
+- **不是默认路径**：能起受控窗口时仍然走弹窗（那样才有 cookie）；回退只在启动失败时触发。
+- 判据：`tests/browser-fallback.test.mjs` 4 条（url 非空 + opened:false + 剪贴板 + instructions、能启动时 opened:true、剪贴板抛错不崩、空输入明确引导）。

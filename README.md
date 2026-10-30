@@ -101,6 +101,7 @@ magpie plugin add D:\主工作区\projects\magpie-trustoken-auth
 ## 常见问题
 
 - **点「手机号注册 / 登录」没反应？** 插件会起一个 Chrome/Edge 窗口（带 AiPy UA）打开官方授权页；窗口没起来就看报错（本机没装 Chromium 内核浏览器 / 调试端口被占）。窗口起来后所有验证都在网页里做，插件只负责最后换 token。
+- **一个 Chromium 内核浏览器都没有怎么办？** 插件会把官方登录网址**复制到剪贴板**并用系统浏览器打开（`opened:false`）。但系统浏览器这条路拿不到 cookie，**不会自动导入**：如果登录后地址栏出现 `aipy-pro://oauth?code=...`，把整段粘回 magpie 的输入框就能换 token；否则请用「本机登录（读取 AiPy 会话）」导入（需要 AiPy Pro 客户端已登录同一个号），或装个 Chrome / Edge 再点一次。
 - **新号能注册吗？** 能（0.3.7 起）。三道门：① 窗口的 UA 必须带 `aipy-pro/*`（服务端靠它认客户端）；② 必须从 `/api/oauth/authorize` 进到 `/oauth/login` 的**同一个标签页**（该页把 `sessionStorage.layout` 置 `false`，前端才走 `/api/user/register/mobile`）；③ 登录后必须走 OAuth PKCE 换 `access_token`。插件已经把这三点都做进弹窗链路，详见 [docs/internals.md](./docs/internals.md) 十四。
 - **有账号还让我下载客户端？** 不会。本机已有 Trustoken 账号时，登录入口只留「本机登录（读取 AiPy 会话）」一个，点一下就把 AiPy Pro 客户端里已登录的号导入。
 - **签到一直失败？** 看北京时间是不是在 08:00–22:00 之外。窗口外插件返回失败，magpie 当天会重试。
