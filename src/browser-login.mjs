@@ -19,7 +19,24 @@ import { execFileSync, spawn } from "node:child_process"
 import { existsSync, mkdirSync, rmSync } from "node:fs"
 import { createServer } from "node:net"
 import { homedir } from "node:os"
-import { join } from "node:path"
+import { basename, join } from "node:path"
+
+// 用户显式指定的浏览器路径（分号分隔可给多个）。名字跟 magpie 生态的报错文案统一：
+// 用户照任何一处提示设了 MAGPIE_LINGXI_BROWSER，插件就必须认它，否则教了也白教。
+const ENV_BROWSER_VARS = ["MAGPIE_LINGXI_BROWSER", "MAGPIE_TRUSTOKEN_BROWSER"]
+
+function envBrowserOverride(env) {
+  for (const key of ENV_BROWSER_VARS) {
+    const raw = String(env?.[key] || "").trim()
+    if (!raw) continue
+    return raw
+      .split(";")
+      .map((s) => s.trim())
+      .filter(Boolean)
+      .map((p) => ({ name: basename(p).replace(/\.exe$/i, ""), path: p }))
+  }
+  return []
+}
 
 /** AiPy 客户端同款 UA（文档第 1 节：服务端只认 `aipy-pro/*`） */
 export const AIPY_APP_VERSION = "2.1.1"
@@ -38,40 +55,130 @@ export function newProfileDir() {
 
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
-/** 找本机 Chromium 内核浏览器（只返回存在的，按优先级） */
-export function browserCandidates(platform = process.platform, env = process.env) {
-  if (platform === "win32") {
-    const pf = env.ProgramFiles || "C:\\Program Files"
-    const pf86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)"
-    const local = env.LOCALAPPDATA || ""
-    return [
-      { name: "Chrome", path: join(pf, "Google", "Chrome", "Application", "chrome.exe") },
-      { name: "Chrome", path: join(pf86, "Google", "Chrome", "Application", "chrome.exe") },
-      ...(local ? [{ name: "Chrome", path: join(local, "Google", "Chrome", "Application", "chrome.exe") }] : []),
-      { name: "Edge", path: join(pf86, "Microsoft", "Edge", "Application", "msedge.exe") },
-      { name: "Edge", path: join(pf, "Microsoft", "Edge", "Application", "msedge.exe") },
-    ].filter((c) => {
+/** win32 固定候选路径（不做存在性过滤，纯函数方便测试锁形状） */
+export function winBrowserCandidatePaths(env = process.env) {
+  const pf = env.ProgramFiles || "C:\\Program Files"
+  const pf86 = env["ProgramFiles(x86)"] || "C:\\Program Files (x86)"
+  const local = env.LOCALAPPDATA || ""
+  const home = env.USERPROFILE || homedir()
+  const edgeDirs = [pf86, pf].map((d) => join(d, "Microsoft", "Edge", "Application"))
+  return [
+    // Chrome 标准三处（系统 / x86 / 每用户）
+    { name: "Chrome", path: join(pf, "Google", "Chrome", "Application", "chrome.exe") },
+    { name: "Chrome", path: join(pf86, "Google", "Chrome", "Application", "chrome.exe") },
+    ...(local ? [{ name: "Chrome", path: join(local, "Google", "Chrome", "Application", "chrome.exe") }] : []),
+    // Edge：主程序可能是 msedge.exe，也可能是 "Microsoft Edge.exe"（2026-10-31 实测，
+    // 该机注册表 App Paths\msedge.exe 指向后者 —— 只查 msedge.exe 会整个落空）
+    ...edgeDirs.flatMap((d) => [
+      { name: "Edge", path: join(d, "msedge.exe") },
+      { name: "Edge", path: join(d, "Microsoft Edge.exe") },
+    ]),
+    // Chromium 每用户安装
+    ...(local ? [{ name: "Chromium", path: join(local, "Chromium", "Application", "chrome.exe") }] : []),
+    // scoop（shims 里的转发 exe 可直接 spawn，参数透传）
+    { name: "Chromium(scoop)", path: join(home, "scoop", "shims", "chromium.exe") },
+    { name: "Chrome(scoop)", path: join(home, "scoop", "shims", "chrome.exe") },
+    // Brave / 360极速（报错文案里点过名的，顺手兜住）
+    { name: "Brave", path: join(pf, "BraveSoftware", "Brave-Browser", "Application", "brave.exe") },
+    { name: "360极速", path: join(pf86, "360Chrome", "Chrome", "Application", "360chrome.exe") },
+  ]
+}
+
+/** Windows PATH 扫描：scoop/自定义安装都靠它兜住（纯函数，不过滤存在性） */
+export function winPathCandidatePaths(env = process.env) {
+  const pathVar = env.PATH || env.Path || ""
+  const dirs = String(pathVar)
+    .split(";")
+    .map((s) => s.trim().replace(/^"(.*)"$/, "$1").trim())
+    .filter((d) => d && /^([a-z]:[\\/]|\\\\)/i.test(d))
+  const exes = ["chrome.exe", "chromium.exe", "msedge.exe", "brave.exe"]
+  const out = []
+  for (const dir of dirs) {
+    for (const exe of exes) {
+      out.push({ name: exe.replace(/\.exe$/i, ""), path: join(dir, exe) })
+    }
+  }
+  return out
+}
+
+/** 注册表 App Paths 兜底：覆盖改名 / 非标准安装（默认实现读注册表，测试可注入假实现） */
+export function defaultQueryAppPaths(exec = execFileSync) {
+  if (process.platform !== "win32") return []
+  const out = []
+  const hive = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\App Paths"
+  for (const exe of ["chrome.exe", "msedge.exe", "brave.exe"]) {
+    for (const root of ["HKLM", "HKCU"]) {
       try {
-        return existsSync(c.path)
+        const buf = exec("reg", ["query", `${root}\\${hive}\\${exe}`, "/ve"], {
+          stdio: ["ignore", "pipe", "ignore"],
+          timeout: 3000,
+          windowsHide: true,
+        })
+        // reg 在中文系统输出 GBK，"(默认)" 会乱码，但路径是 ASCII —— 按行取 REG_SZ 之后的部分
+        const line = String(buf)
+          .split(/\r?\n/)
+          .find((l) => l.includes("REG_SZ"))
+        const value = line?.split(/REG_SZ\s*/i)[1]?.trim()
+        if (value && /\.exe$/i.test(value) && existsSync(value)) {
+          out.push({ name: exe.replace(/\.exe$/i, ""), path: value })
+        }
+      } catch {}
+    }
+  }
+  return out
+}
+
+/** 找本机 Chromium 内核浏览器（只返回存在的，按优先级：env 覆盖 > 固定路径 > 注册表兜底） */
+export function browserCandidates(platform = process.platform, env = process.env, deps = {}) {
+  const queryAppPaths = deps.queryAppPaths ?? defaultQueryAppPaths
+  const exists = deps.exists ?? ((p) => {
+    try {
+      return existsSync(p)
+    } catch {
+      return false
+    }
+  })
+
+  const seen = new Set()
+  const out = []
+  const push = (c) => {
+    const k = String(c.path).toLowerCase()
+    if (!k || seen.has(k)) return
+    seen.add(k)
+    out.push(c)
+  }
+
+  // ① 用户显式指定：最优先，且不做存在性过滤 —— 路径写错就让 spawn 的报错真实可见
+  for (const c of envBrowserOverride(env)) push(c)
+
+  // ② 固定路径 + PATH 扫描 + 命令查找，过滤存在性
+  let pool = []
+  if (platform === "win32") {
+    pool = [...winBrowserCandidatePaths(env), ...winPathCandidatePaths(env)]
+  } else if (platform === "darwin") {
+    pool = [
+      { name: "Chrome", path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" },
+      { name: "Edge", path: "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" },
+    ]
+  } else {
+    pool = ["google-chrome", "chromium", "chromium-browser", "microsoft-edge"].flatMap((bin) => {
+      try {
+        const p = execFileSync("sh", ["-lc", `command -v ${bin}`], { encoding: "utf8" }).trim()
+        return p ? [{ name: bin, path: p }] : []
       } catch {
-        return false
+        return []
       }
     })
   }
-  if (platform === "darwin") {
-    return [
-      { name: "Chrome", path: "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome" },
-      { name: "Edge", path: "/Applications/Microsoft Edge.app/Contents/MacOS/Microsoft Edge" },
-    ].filter((c) => existsSync(c.path))
+  for (const c of pool) {
+    if (exists(c.path)) push(c)
   }
-  return ["google-chrome", "chromium", "chromium-browser", "microsoft-edge"].flatMap((bin) => {
-    try {
-      const p = execFileSync("sh", ["-lc", `command -v ${bin}`], { encoding: "utf8" }).trim()
-      return p ? [{ name: bin, path: p }] : []
-    } catch {
-      return []
-    }
-  })
+
+  // ③ 注册表 App Paths 兜底（Edge 改名这类非标准安装的最后一道网）
+  if (platform === "win32" && out.length === 0) {
+    for (const c of queryAppPaths()) push(c)
+  }
+  return out
 }
 
 async function freePort() {
@@ -219,7 +326,13 @@ export function pickSessionCookie(cookies) {
  */
 export async function launchLoginWindow(url, { timeoutMs = 20_000 } = {}) {
   const cand = browserCandidates()[0]
-  if (!cand) throw new Error("本机没找到 Chrome / Edge（需要 Chromium 内核浏览器才能完成注册）")
+  if (!cand) {
+    throw new Error(
+      "没有找到 Chromium 内核浏览器（Chrome / Edge / Brave / scoop 版 Chromium 等）。" +
+        "装一个，或设环境变量 MAGPIE_LINGXI_BROWSER 指向它的 exe" +
+        "（例如 C:\\Users\\<你>\\scoop\\shims\\chromium.exe）后重试。",
+    )
+  }
 
   const port = await freePort()
   const dir = newProfileDir()

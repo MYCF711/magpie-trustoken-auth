@@ -458,3 +458,34 @@ magpie 的 `PluginOptions` 是 `map[provider]map[key]bool` —— **只支持布
 - **语义**：开 = 固定用当前码（有 `fixed`/`custom` 策略码用它，否则作者码 `AUTHOR_INVITE`）；
   关（默认）= 滚动码（`readInvite()`，最近登录 / 签到记下的号），没有就作者码。
 - **判据**：`tests/invite-option.test.mjs` 5 条（默认滚动 / 开关开固定 / 读抛错当关 / index 的 `auth.options` 与 `input.magpie.option` 接线 / 登录页只剩 phone 一个 prompt）。
+
+### 14.7 浏览器探测四层（0.3.11 —— 「装了浏览器却报没找到」的修复）
+
+**现场**（2026-10-31 主人机器）：装了 scoop Chromium（`%USERPROFILE%\scoop\apps\chromium\current\chrome.exe`，
+shim 在 `%USERPROFILE%\scoop\shims\chromium.exe`）和 Edge，弹窗注册却报「没有找到 Chromium 内核浏览器」。
+旧 `browserCandidates()` 在 Windows 只查 5 条写死路径，三处盲区全踩：
+
+1. **scoop 不在候选列表**：只查 Program Files / LOCALAPPDATA 下的 Google Chrome 和 Edge。
+   而且 **linux 分支用 `command -v` 扫了 PATH，Windows 分支却完全不扫** —— scoop 把
+   `~\scoop\shims` 加进 PATH 后 `chromium.exe` 明明能被任何 PATH 查找命中。
+2. **Edge 改名**：该机注册表 `HKLM\...\App Paths\msedge.exe` 指向
+   `C:\Program Files (x86)\Microsoft\Edge\Application\Microsoft Edge.exe`（主程序带空格），
+   旧代码只查 `msedge.exe`。
+3. **`MAGPIE_LINGXI_BROWSER` 不被认**：UI 上的报错文案（来自 `@kevinfx/magpie-wps-lingxi`，
+   经 magpie 错误面板串到了 Trustoken 的登录弹窗上）教用户设这个变量，插件却不读它 ——
+   教了白教。
+
+**修复后的优先级**（`browserCandidates(platform, env, deps)`，deps 可注入方便测试）：
+
+| 层 | 内容 | 规矩 |
+|---|---|---|
+| ① env 覆盖 | `MAGPIE_LINGXI_BROWSER` / `MAGPIE_TRUSTOKEN_BROWSER`，分号分隔多个 | **最优先且不过滤存在性** —— 用户显式指定的路径写错时，让 spawn 的报错真实可见，而不是悄悄跳过变成「又没找到」 |
+| ② 固定路径 | Chrome 三处 + **Edge 双文件名**（`msedge.exe`、`Microsoft Edge.exe`）+ Chromium 每用户 + scoop shim（chromium/chrome）+ Brave + 360极速 | `winBrowserCandidatePaths(env)` 纯函数，不过滤 |
+| ③ PATH 扫描 | `winPathCandidatePaths(env)`：PATH 每目录 × chrome/chromium/msedge/brave | 丢引号包裹项；**丢相对路径项**（相对 cwd 不可靠） |
+| ④ App Paths 兜底 | `reg query HKLM/HKCU ...App Paths\{chrome,msedge,brave}.exe /ve` | **仅当①②③全落空才查**（省一次子进程）；reg 中文系统输出 GBK 乱码没关系，按行取 `REG_SZ` 后的 ASCII 路径 |
+
+- 全程按完整路径（lowercase）去重：固定路径与 PATH 扫描会撞车。
+- launchLoginWindow 的报错文案同步改成教用户设 `MAGPIE_LINGXI_BROWSER`（原「本机没找到
+  Chrome / Edge」没有出路）。
+- **判据**：`tests/browser-candidates.test.mjs` 10 条；本机实测命中两个候选：
+  Edge（`Microsoft Edge.exe`，改名场景）+ `%USERPROFILE%\scoop\shims\chromium.exe`。
