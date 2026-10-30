@@ -1,3 +1,7 @@
+## 0.3.4 — 2026-10-30
+
+- **重新发布**：0.3.3 在 npm 侧卡在一个 staged 状态（registry 查 404，但 publish 报 409 "Cannot publish over previously staged version"），代码相同，改以 0.3.4 发布。功能与 0.3.3 完全一致：登录入口按「本机是否已有账号」自动分流
+
 ## 0.3.3
 
 - feat: 添加账号按「本机有没有 Trustoken 账号」自动分流（读 `~/.config/magpie/plugin-auth.json` 的 `trustoken` / `trustoken#…`，只读）：**有账号 → 只留「本机登录（读取 AiPy 会话）」一个入口**，点一下就把 AiPy Pro 客户端里登录的号导入 magpie，无输入、无选择页；**0 账号 → 才出现**「首次使用：下载 AiPy Pro 客户端注册」（邀请码模式 → 下载链接 → 自动等登录态）+「本机登录」+「手机号登录」。有账号时不再弹下载安装包连接。
