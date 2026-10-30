@@ -136,7 +136,7 @@ export function makeMethods(c, deps = {}) {
 
         let win
         try {
-          win = await launchLoginWindow(authorizeUrlFor(challenge))
+          win = await launchLoginWindow(authorizeUrlFor(challenge, undefined, inviteCode))
         } catch (e) {
           removeJson(pkceFile)
           throw new Error(`打不开注册窗口：${String(e?.message ?? e).slice(0, 300)}`)

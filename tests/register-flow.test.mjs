@@ -128,3 +128,12 @@ test("⑦ UA 必须在请求层覆盖：auth 请求识别 + User-Agent 头重写
     assert.ok(src.includes(w), `browser-login.mjs 缺「${w}」`)
   }
 })
+
+test("⑧ authorizeUrlFor 带 aff 邀请码（新号注册要记来源）", () => {
+  const withAff = authorizeUrlFor("ch", undefined, "Chdr")
+  assert.ok(withAff.includes("aff=Chdr"), withAff)
+  const without = authorizeUrlFor("ch")
+  assert.ok(!without.includes("aff="), without)
+  // 默认不传时保持原 URL 形状（不出现空 aff=）
+  assert.ok(without.includes("client_id=aipy-pro"))
+})
