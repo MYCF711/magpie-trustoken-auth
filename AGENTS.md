@@ -108,6 +108,12 @@ PR 的 `rules` 检查全绿并合并后，才从与 `origin/main` 完全一致�
 |---|---|---|---|
 | 32 | 机器上装了 Chromium / Edge，弹窗注册却报「没有找到 Chromium 内核浏览器」 | `browserCandidates()` 不能只查写死路径，四层按优先级都要在：① env 覆盖 `MAGPIE_LINGXI_BROWSER` / `MAGPIE_TRUSTOKEN_BROWSER`（magpie 生态的报错文案教用户设的就是它，插件不认 = 教了白教；分号分隔多个；**不过滤存在性**，路径写错让 spawn 报错真实可见）② 固定路径必须含 **Edge 双文件名**（`msedge.exe` 和 `Microsoft Edge.exe` —— 2026-10-31 实测有机器的 Edge 主程序叫后者，注册表 `App Paths\msedge.exe` 指向它）+ scoop shim（`%USERPROFILE%\scoop\shims\chromium.exe`）③ **Windows 也要扫 PATH**（scoop 把 shims 加进 PATH；linux 分支 `command -v` 扫了、Windows 漏了就是这次的 bug）④ 固定路径全落空时注册表 `App Paths` 兜底。判据：`node --test` 里 `tests/browser-candidates.test.mjs` 10 条；本机 `browserCandidates()` 必须命中 ≥1 个 | [`src/browser-login.mjs`](./src/browser-login.mjs) · [internals 14.7](./docs/internals.md) · `tests/browser-candidates.test.mjs` |
 
+再一条是 **2026-10-31 的浏览器回退**（打不开受控浏览器时怎么让用户自己走）：
+
+| # | 症状 | 判据 | 出处 |
+|---|---|---|---|
+| 33 | 用户机器上一个 Chromium 内核浏览器都没有（或起窗口失败），弹窗注册只报「没找到浏览器」，用户完全没有出路 | `authorize()` 要返回**回退**：`{ url: 登录网址, opened: false, method: "code" }` —— `opened:false` 时 magpie 会自己用系统浏览器打开（`plugins.go:788`）；同时 `copyToClipboard(url)`（失败吞掉），instructions 写明「网址已复制」。**但系统浏览器拿不到 session cookie，通常不会自动导入**——必须如实写，并给两条出路：① 浏览器跳到 `aipy-pro://oauth?code=...` 时把整段粘回来（用这次落盘的 verifier 换 token）② 改用「本机登录（读取 AiPy 会话）」。回退**只在启动失败时触发**，能起窗口仍走弹窗。判据：`tests/browser-fallback.test.mjs` 4 条 | [`src/hooks/methods.mjs`](./src/hooks/methods.mjs) · [internals 14.7](./docs/internals.md) · `tests/browser-fallback.test.mjs` |
+
 ---
 
 ## 三、命令
@@ -219,6 +225,7 @@ node scripts/probe-vision.mjs <provider/model> …
 | [`tests/register-flow.test.mjs`](./tests/register-flow.test.mjs) | 7 条弹窗注册判据锁：verifier 43 字符 + SHA256 challenge、AiPy UA、trustoken `session` cookie、302 `aipy-pro://oauth?code=`、`expires_in ≈ 2592000`、body 只读一次、**UA 请求层覆盖与头重写** | 坑 30；`node --test` 自动跑 |
 | [`tests/invite-option.test.mjs`](./tests/invite-option.test.mjs) | 5 条邀请码开关锁：默认滚动 / 开关开固定 / 读抛错当关 / `auth.options` 与 `input.magpie.option` 接线 / 登录页只剩 phone prompt | 坑 31；`node --test` 自动跑 |
 | [`tests/browser-candidates.test.mjs`](./tests/browser-candidates.test.mjs) | 10 条浏览器探测锁：env 覆盖三态（优先/分号/别名变量）、Edge 双文件名 + scoop shim、PATH 扫描（引号/相对路径丢弃）、App Paths 兜底触发与跳过、去重、本机 scoop 回归锁 | 坑 32；`node --test` 自动跑 |
+| [`tests/browser-fallback.test.mjs`](./tests/browser-fallback.test.mjs) | 4 条回退锁：启动失败时 url 非空 + opened:false + 剪贴板 + instructions；能启动时仍走弹窗；剪贴板抛错不崩；空输入引导「本机登录」 | 坑 33；`node --test` 自动跑 |
 
 **为什么 `src/quota.mjs` 值得单独一个文件**：额度窗口是 magpie **画卡片**和**智能路由排序**的同一个输入。
 写错不会崩，只会让卡片显示「剩余额度未知」、让这个号在路由里被当成不存在 —— 用户以为插件坏了，
