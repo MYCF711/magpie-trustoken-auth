@@ -1,6 +1,6 @@
 ## 0.3.6
 
-- feat: **手机号入口改成官方注册接口**（`sendSmsCode` → `loginMobile` / `registerMobile`）：填手机号 → 收短信 → 填验证码，**新号自动完成注册**、老号直接登录。不再开浏览器窗口、不再需要装/启动 AiPy 客户端、不需要用户过滑块。调研依据：`/api/status` 的 `WebRegisterEnabled=false` 只关闭网页 UI 的注册入口，`enabled_phone_register=true` 仍允许手机号注册，注册端点直接 POST 没有客户端身份门（实测假验证码返回「验证码错误或已过期」），`turnstile_check=false`。
+- feat: **手机号入口改成官方注册接口（当前不可用，保留待研究）**：`sendSmsCode` → `loginMobile` / `registerMobile`。实测结论：网页点「获取验证码」先弹滑块（`/api/captcha` → `/api/captcha/check`），过完仍提示要 AiPy 客户端；直接 POST `/api/sms/code` 缺滑块 token 恒 400 `{"success":false}`（请求头伪装无效）。注册端点 `/api/user/register/mobile` 本身通（假验证码返回「验证码错误或已过期」），但拿不到真验证码。**新号请用 AiPy Pro 客户端注册后走「本机登录」。**
 - refactor: 删除 `src/browser-login.mjs`（951 行，自建 Chromium profile + CDP + 自动解滑块）—— 那条路只能登录已注册的号，正是主人说的「没意义」；`methods.mjs` 里对应的 PKCE / 表单注入 / OAuth 回调辅助函数一并删除。
 - feat: **恢复造任务 + filler**（主人 2026-10-30 明确「造任务和 filler 请求我要」）：`src/aipy-local.mjs` 恢复 `readAipyApiKey` / `findAipyPort` / `createAipyTask` / `ensureAipyTasks`（与 0.3.4 逐字一致），`src/hooks/checkin.mjs` 恢复补任务块与带 `Aipy-Task-ID` 的 filler 循环，`scripts/aipy-daily.mjs` 恢复刷任务器形态。
 - test: `tests/compliance.test.mjs` 更新口径 —— 取消对 `createTask` / `Aipy-Task-ID` / `ensureAipyTasks` / `solveSlider` 等的禁止，改成**正向锁**（造任务 + filler 必须在）；保留「账号身份 / magpie 私有文件 / 写死安装包直链」的禁止；新增「手机号入口走官方注册接口、浏览器登录链已删除」的断言。
