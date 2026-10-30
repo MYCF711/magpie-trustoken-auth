@@ -444,3 +444,17 @@ verifier 43 字符且 challenge = SHA256；UA 含 `aipy-pro/2.1.1` + `Electron/3
 - 「注册成功后 token 落点」按文档：网页登录只给 cookie，token 由 OAuth 换出（不是读客户端 DB）；
   「本机登录」那条路仍读 `%APPDATA%ipy-proipy` 的 `meta.trustoken-token`，两条路互不影响。
 - 微信扫码分支未测（文档用微信扫码注册成功，本插件窗口里同样可以扫）。
+
+
+### 14.6 邀请码：从登录页文本框改成插件选项开关（0.3.10）
+
+magpie 的 `PluginOptions` 是 `map[provider]map[key]bool` —— **只支持布尔**，装不下
+「下拉选某个账号」或「填一个字符串」。所以：
+
+- **删**：`手机号注册 / 登录（弹窗）` 的 `key:"invite"` 输入框、`saveInviteChoice()` / `modeHint()` 调用；
+- **加**：`index.mjs` 的 `auth.options: [{ key:"invite-first", label:"邀请码固定不滚动", description:"…", default:false }]`；
+- **接线**：工厂改成 `async (input) => {...}`，`setInviteOptionReader(c.PROVIDER, key => input?.magpie?.option?.(c.PROVIDER, key) === true)`
+  —— 传的是**读取函数**，不是缓存值（magpie 拨开关不重启 host，每次读才是当前值；`input` 可能是 undefined，一律可选链）；
+- **语义**：开 = 固定用当前码（有 `fixed`/`custom` 策略码用它，否则作者码 `AUTHOR_INVITE`）；
+  关（默认）= 滚动码（`readInvite()`，最近登录 / 签到记下的号），没有就作者码。
+- **判据**：`tests/invite-option.test.mjs` 5 条（默认滚动 / 开关开固定 / 读抛错当关 / index 的 `auth.options` 与 `input.magpie.option` 接线 / 登录页只剩 phone 一个 prompt）。

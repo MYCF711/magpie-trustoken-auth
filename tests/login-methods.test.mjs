@@ -22,19 +22,20 @@ import { hasAccounts } from "../src/accounts.mjs"
 
 const C = { PROVIDER: "trustoken", PROVIDER_NAME: "Trustoken（AiPy）" }
 
-test("1) 入口集合：0 账号 → 3 个（下载/本机/手机号注册登录）；有账号 → 只剩「本机登录」", () => {
+test("1) 入口集合：0 账号 → 2 个（本机/手机号注册登录，不再有下载）；有账号 → 只剩「本机登录」", () => {
   const none = makeMethods(C, { hasAccounts: () => false })
   assert.deepEqual(
     none.map((m) => m.label),
     [
-      "Trustoken（AiPy） 首次使用：下载 AiPy Pro 客户端注册",
       "Trustoken（AiPy） 本机登录（读取 AiPy 会话）",
       "Trustoken（AiPy） 手机号注册 / 登录（弹窗）",
     ],
-    "0 账号时应该露出下载注册这条路",
+    "0 账号时走弹窗注册，不再引导下载客户端",
   )
-  assert.equal(none[0].type, "oauth")
-  assert.equal(none[1].type, "api")
+  assert.equal(none[0].type, "api")
+  assert.equal(none[1].type, "oauth")
+  // 0.3.10 起不再挂载下载入口：弹窗能直接注册新号
+  assert.ok(!none.some((m) => /下载|安装包/.test(m.label)), "不该再有下载入口")
 
   const some = makeMethods(C, { hasAccounts: () => true })
   assert.deepEqual(some.map((m) => m.label), ["Trustoken（AiPy） 本机登录（读取 AiPy 会话）"])
@@ -68,23 +69,6 @@ test("2) hasAccounts：只认 trustoken / trustoken#…；没有文件=0；坏 J
     console.warn = quiet
     rmSync(dir, { recursive: true, force: true })
   }
-})
-
-test("3) 行为层兜底：列表是旧的（0 账号时缓存）但已有账号 → 下载入口不给下载链接", async () => {
-  let accounts = 0
-  const methods = makeMethods(C, { hasAccounts: () => accounts > 0 })
-  const download = methods[0]
-  assert.match(download.label, /下载/)
-
-  accounts = 1 // 模拟：列表渲染之后、点击之前，账号已经加上了（缓存没刷新）
-
-  const res = await download.authorize({ invite: "0" })
-  assert.equal(res.url, "", "有账号时 authorize 不该返回 URL")
-  assert.ok(!JSON.stringify(res).includes("aipy-pro-2.1.1-x64.exe"), "instructions 里也不许出现下载链接")
-  const done = await res.callback()
-  assert.equal(done.type, "failed")
-  assert.match(done.error, /已经有 Trustoken 账号/)
-  assert.match(done.error, /本机登录/)
 })
 
 test("4) 本机登录：没有本机 AiPy 登录态 / 号已在 magpie 里 → 都要明确报错", async () => {
