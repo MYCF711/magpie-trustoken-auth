@@ -1,3 +1,13 @@
+## 0.3.7
+
+- feat: **手机号入口改成弹窗注册链路，新号可以在插件里注册了**（推翻 0.3.6 的「只能客户端注册」结论）。三道门：① 窗口 UA 必须带 `aipy-pro/*`（服务端靠它认客户端，否则新号被拒）；② 必须从 `/api/oauth/authorize` 307 到 `/oauth/login` 的**同一个标签页**（该页把 `sessionStorage.layout` 置 `false`，前端才走 `/api/user/register/mobile`）；③ 登录后走 OAuth PKCE 换 `access_token`。
+- feat: 重建 `src/browser-login.mjs`（受控 Chromium + CDP）：`--remote-debugging-port` + 一次性 `--user-data-dir` + `--user-agent=<AiPy UA>`；轮询 `localStorage.user` 判登录完成；`Storage.getCookies` 拷 trustoken 的 `session`；关窗删 profile。
+- feat: `src/oauth.mjs` 新增纯函数 `makePkce` / `authorizeUrlFor` / `codeFromLocation` / `fetchOAuthCode`（node 里 `redirect:"manual"` 读 302，因为 `aipy-pro://` 导航 CDP 拦不到）/ `readJsonBody`（body 只读一次）/ `tokenExpiry`。
+- fix: **verifier 落盘**（文档坑 5.2）：`src/store.mjs` 的 `fileOf("oauth-pkce", {siteId:"trustoken", account})`，同一手机号 10 分钟内复用同一对 PKCE；成功后才删。
+- fix: **UA 覆盖升级到请求层**（Jet 2026-10-30 提示）：启动参数 `--user-agent` 只覆盖导航请求，页面里的 XHR/fetch 可能仍带浏览器 UA。现在每个 page target 都挂 `openUaGuard`：`Network.setUserAgentOverride` + `Emulation.setUserAgentOverride` + `Fetch.enable`/`Fetch.continueRequest` 逐请求重写 `User-Agent`；`waitForLogin` 断言 `navigator.userAgent` 含 `aipy-pro/`，覆盖失败当场报错。实机烟测：`intercepted=17`（Fetch 确实在拦）。
+- test: 新增 `tests/register-flow.test.mjs` 7 条（PKCE 长度与 SHA256、AiPy UA、session cookie、302 Location 前缀、`expires_in ≈ 2592000`、body 只读一次、UA 请求层覆盖与头重写）。
+- docs: `docs/internals.md` 新增第十四节（三道门 / 实现 / 七个坑 / 判据 / 未验证），第十三节标注「已被推翻，保留作历史」。
+
 ## 0.3.6
 
 - feat: **手机号入口改成官方注册接口（当前不可用，保留待研究）**：`sendSmsCode` → `loginMobile` / `registerMobile`。实测结论：网页点「获取验证码」先弹滑块（`/api/captcha` → `/api/captcha/check`），过完仍提示要 AiPy 客户端；直接 POST `/api/sms/code` 缺滑块 token 恒 400 `{"success":false}`（请求头 / UA / TLS 伪装均无效，不是头的问题）。注册端点 `/api/user/register/mobile` 本身通（假验证码返回「验证码错误或已过期」），但拿不到真验证码。**新号请用 AiPy Pro 客户端注册后走「本机登录」。**

@@ -320,9 +320,9 @@ review 原话：*That farms a vendor's promotion on the user's account.*
 > 只在旧的自解滑块版本上验证过。装 0.3.5 后第一次手机号登录即可确认。
 
 
-## 13. 0.3.6：手机号注册入口（⚠ 当前已知不通，保留仅作占位）
+## 13. 0.3.6：手机号注册入口（⚠ 本节结论已被第十四节推翻，保留作历史记录）
 
-### 13.1 结论（先读这条，别再试）
+### 13.1 结论（⚠ 已被第十四节推翻：现在能注册了，别照这节做）
 
 **这条入口目前不可用。** 服务端对「手机号注册」有两道门：
 
@@ -379,3 +379,68 @@ review 原话：*That farms a vendor's promotion on the user's account.*
 `src/hooks/checkin.mjs` 的补任务块与带 `Aipy-Task-ID` 的 filler 循环、`scripts/aipy-daily.mjs` 的刷任务器
 全部**原样恢复**（与 0.3.4 逐字一致）。review 的观点保留在本文件 12.3 作为历史记录，
 但**当前实现以本节为准** —— 下一个 agent 不要按 review 再删一遍。
+
+
+## 14. 0.3.7：弹窗注册链路（2026-10-30 e2e 实测定稿）
+
+> 本节推翻第十三节「只能客户端注册」的结论。完整实测记录见
+> `E:\Downloadsipy-register-flow.md`（181 行，作者当晚 e2e 跑通两个测试号）。
+
+### 14.1 三道门（缺一条就注册不了，且**前两条缺了不会报错，只会静默走登录**）
+
+| 门 | 机制 | 缺了会怎样 |
+|---|---|---|
+| ① **UA** | 服务端只认 UA 里的 `aipy-pro/*` 应用标识。⚠ **必须在请求层覆盖**（Jet 2026-10-30 提示）：启动参数 `--user-agent` 只覆盖导航请求，页面里的 XHR/fetch 仍可能带浏览器自己的 UA 或被页面自己的 fetch 头覆盖。实现上三层一起上：启动参数 + `Network.setUserAgentOverride` + `Emulation.setUserAgentOverride` + `Fetch.enable`/`Fetch.continueRequest` 逐请求重写 `User-Agent` | 新号注册被拒：`{"message":"新增账号需下载AiPy Pro客户端…","success":false}` |
+| ② **`sessionStorage.layout`** | 从 `GET /api/oauth/authorize?...` 307 到 `/oauth/login` 的**同一个标签页**，页面挂载时无条件 `sessionStorage.setItem("layout","false")`；前端据此选 `/api/user/register/mobile` 而不是 `/api/user/login/mobile` | 走 login → 新号必被拒（就是用户看到的那条报错）。sessionStorage 是 per-tab 的，换标签页就丢 |
+| ③ **OAuth PKCE** | `authorize` → 302 `Location: aipy-pro://oauth?code=...` → `POST /api/oauth/token`（form-urlencoded：code + redirect_uri + client_id + code_verifier + grant_type） | 拿不到 `access_token`（网页登录只产生 cookie session，不产生 token） |
+
+### 14.2 实现（`src/browser-login.mjs` + `src/oauth.mjs` + `src/hooks/methods.mjs`）
+
+```
+authorize(phone)
+ 1. makePkce()：verifier 32B base64url（43 字符）+ challenge=SHA256 base64url
+    → **立刻落盘** `fileOf("oauth-pkce", {siteId:"trustoken", account: 打码手机号})`（文档坑 5.2）
+    → 同一手机号 10 分钟内复用同一对 PKCE（进程被杀后服务端 session 里还挂着旧授权请求）
+ 2. authorizeUrlFor(challenge)：/api/oauth/authorize?code_challenge=…&redirect_uri=aipy-pro://oauth&client_id=aipy-pro&…
+ 3. launchLoginWindow(url)：本机 Chrome/Edge + --remote-debugging-port=<空闲端口>
+    + --user-data-dir=~/.cache/magpie/trustoken-profile-<ts> + --user-agent=<AiPy UA>
+    + 每个 page target 挂 `openUaGuard`：Network/Emulation.setUserAgentOverride
+      + Fetch.enable/Fetch.continueRequest 把每个请求的 User-Agent 重写成 AiPy UA
+      （`uaStats()` 可查拦截数 / 认证请求的 UA；waitForLogin 断言 navigator.userAgent 含 aipy-pro/）
+ 4. waitForLogin()：轮询 CDP 页面，等 localStorage.user 非空（或 URL 变 aipy-pro://）
+ 5. getCookies()：CDP Storage.getCookies → pickSessionCookie() 只取 trustoken 域的 `session`
+ 6. fetchOAuthCode()：node 带 cookie + AiPy UA 重新 GET authorize（redirect:"manual"）→ 读 302 Location 的 code
+ 7. exchangeOAuthCode() → tokenExpiry()（access_token 必填，expires_in≈2592000）
+ 8. completeSignIn()：/api/user/self → /api/token/ 复用或新建 → api_key → 导入 magpie
+ 9. finally：关窗口、删一次性 profile、删 verifier 落盘记录
+```
+
+**为什么不在浏览器里拦 `aipy-pro://` 导航**（文档 5.1）：自定义协议不经过网络栈，
+CDP 的 `Fetch.requestPaused` / `Network.responseReceived` 都收不到；node 里 `redirect:"manual"`
+的 302 头想怎么读就怎么读 —— 这是最稳的一招。
+
+### 14.3 七个坑（文档第 5 节，一条都别踩）
+
+1. `aipy-pro://` 导航 CDP 拦不到 → 必须 node 补签；
+2. **verifier 必须先落盘**（只在内存会丢，两轮失败都因它）；
+3. `code` 一次性（换过就作废，重新 authorize 是秒级）；
+4. `session` cookie 是「登录态 + 授权请求状态」二合一，**只拷贝不要删**；
+5. `/api/sms/code` 纯 API 链不通（两种 UA 都 `{"success":false}`）→ 所以**必须有浏览器**；
+6. `tokRes.text()` 之后不能再 `json()`（body 只能读一次）→ `readJsonBody()` 统一处理；
+7. 模型名是 `deepseek-flash` / `deepseek-v4-pro`，**没有 `v4.1` 字样**（`src/models.mjs` 已按此核对）；
+8. **UA 必须在请求层覆盖**（Jet 提示）：只设 `--user-agent` 启动参数不够 —— 页面里的 `POST /api/user/register/mobile` 是 XHR/fetch，可能带浏览器自己的 UA。必须 `Network.setUserAgentOverride` + `Fetch.continueRequest` 双保险；验证方式是抓该请求的 `User-Agent` 头，确认含 `aipy-pro/` 而不是 `Chrome/154`。
+
+### 14.4 判据（`tests/register-flow.test.mjs` 7 条）
+
+verifier 43 字符且 challenge = SHA256；UA 含 `aipy-pro/2.1.1` + `Electron/34.3.3`；
+`pickSessionCookie` 只取 trustoken 的 `session` 且非空；`codeFromLocation` 前缀必须是
+`aipy-pro://oauth?`；`tokenExpiry` 要 `access_token` 且 `expires_in ≈ 2592000`；
+`readJsonBody` 只读一次 body；外加第 ⑦ 条：`isAuthRequest` 认注册/登录/短信/换 token、`withUserAgent` 大小写不敏感地重写且不重复、源码里 CDP 三层覆盖都在。
+
+### 14.5 未验证（如实写）
+
+- **没有真跑注册**（主人明确：文档已用掉两个测试号 183247/183250，再注册会消耗真号）。
+  已跑的是：本机 Edge 起窗口 + CDP `/json` + `Storage.getCookies` + 关窗清理（485ms 起来，返回 0 条 cookie，符合未登录预期）；UA guard 实机烟测：`guards=1 intercepted=17 auth=0`，`navigator.userAgent` 断言通过（未被「UA 覆盖失败」拦下）。
+- 「注册成功后 token 落点」按文档：网页登录只给 cookie，token 由 OAuth 换出（不是读客户端 DB）；
+  「本机登录」那条路仍读 `%APPDATA%ipy-proipy` 的 `meta.trustoken-token`，两条路互不影响。
+- 微信扫码分支未测（文档用微信扫码注册成功，本插件窗口里同样可以扫）。

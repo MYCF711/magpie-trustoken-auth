@@ -29,7 +29,7 @@ test("1) 入口集合：0 账号 → 3 个（下载/本机/手机号注册登录
     [
       "Trustoken（AiPy） 首次使用：下载 AiPy Pro 客户端注册",
       "Trustoken（AiPy） 本机登录（读取 AiPy 会话）",
-      "Trustoken（AiPy） 手机号注册 / 登录（短信验证码）",
+      "Trustoken（AiPy） 手机号注册 / 登录（弹窗）",
     ],
     "0 账号时应该露出下载注册这条路",
   )
