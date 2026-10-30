@@ -15,12 +15,12 @@ Trustoken（trustoken.cn）是 AiPy 的官方 token 分发商，`api.trustoken.c
 
 ## 功能
 
-- **添加账号自动分流** —— 本机已有 Trustoken 账号时，添加账号**只显示「本机登录（读取 AiPy 会话）」一个入口**：点一下就把 AiPy Pro 客户端里已经登录的号导入 magpie，无输入、无选择页、不再拿下载链接挡人。只有本机 **0 个账号**时才出现「首次使用：下载 AiPy Pro 客户端注册」（邀请码 + 下载链接 + 自动等登录态）、「本机登录」和「手机号登录」三条路。新号请在客户端里自己注册（邀请码在客户端里填），注册完回到插件点「本机登录」即可。
-- **登录** —— 打开一个**可见**的浏览器窗口自动填表：手机号、协议、邀请码、点获取验证码；页面上要滑块验证时**由你本人拖**（插件不代解验证码、不绕过风控），短信发出后你只要在 magpie 里填一次验证码。
+- **添加账号自动分流** —— 本机已有 Trustoken 账号时，添加账号**只显示「本机登录（读取 AiPy 会话）」一个入口**：点一下就把 AiPy Pro 客户端里已经登录的号导入 magpie，无输入、无选择页、不再拿下载链接挡人。只有本机 **0 个账号**时才出现「首次使用：下载 AiPy Pro 客户端注册」（邀请码 + 下载链接 + 自动等登录态）、「本机登录」和「手机号注册 / 登录」三条路。新号也可以直接用「手机号注册 / 登录」在插件里注册，不用装客户端。
+- **手机号注册 / 登录** —— 插件直接调官方接口：你填手机号 → 收到短信 → 填验证码，**新号自动完成注册**、老号直接登录。不开浏览器窗口、不装/不启动 AiPy 客户端、不用人过滑块。只需要你两步：填手机号、填验证码。
 - **模型目录** —— 登录后按账号实时拉 `/v1/models`，未登录用 13 个静态模型兜底。
 - **灵石余额** —— `/api/user/self` 的 quota ÷ 5000，卡片上直接显示。
 - **自动签到** —— 北京时间 08:00–22:00；窗口外返回失败，让 magpie 当天晚些时候重试。
-- **每日任务** —— 只领取服务端**已经标成可领取**的奖励（50 / 150 灵石）；进度靠你在 AiPy Pro 客户端里干活涨，插件不代刷。
+- **每日任务** —— 自动领取 `claimable` 的奖励（50 / 150 灵石）；未完成的用最低价模型补请求。
 - **邀请码** —— 注册新号时带 `aff_code`：默认作者码 `Chdr`（可用 `TRUSTOKEN_INVITE` 覆盖），也可在登录弹窗里填自己的码；每次登录 / 签到自动滚动当前账号自己的码。插件**不带任何账号身份**（不把谁家的 uid / accountId 当默认值）。
 - **图片能力写死** —— 只有 `qwen3.8-flash` 与 `kimi/kimi-k3` 标记为可收图；其余模型一律 `image: false`，绝不把图片发出去被上游路由到别的模型。
 - **模型错误 404** —— 单个模型不可用只搁置该模型，不误伤整个账号。
@@ -51,16 +51,17 @@ Trustoken（trustoken.cn）是 AiPy 的官方 token 分发商，`api.trustoken.c
 >
 > 换算：500,000 quota = 1 元；`qwen3.8-flash` 的输入约 ¥1.49 / 1M token、输出约 ¥4.51 / 1M token。
 
-**最低消费模型是 `qwen3.8-flash`** —— 输入与 hy3/deepseek-flash 同价，输出便宜 25%（插件不再用它做任何自动请求，这个结论只用于说明价格档位）。
+**最低消费模型是 `qwen3.8-flash`** —— 输入与 hy3/deepseek-flash 同价，输出便宜 25%。插件补每日任务时固定用它。
 
 ---
 
 ## 签到 / 每日任务（任务 = 会话）
 
 - **签到**：每天北京时间 08:00–22:00，`POST /api/user/checkin`，基准 100 灵石；连续签到按阶梯加赠。magpie 每账号每天调一次 `auth.checkin`，失败当天会重试。
-- **每日任务**：`daily_ai_1`（完成 1 次 AI 任务，50 灵石）、`daily_ai_5`（完成 5 次，150 灵石）。**trustoken 的「AI 任务」= AiPy Pro 的一个任务（会话）**：在你自己的 AiPy 客户端里新建并执行任务，`daily_ai_5` 的 progress 才会 +1。
-- **插件做什么**：`auth.checkin` 只做两件事 —— 调厂商的签到接口；把服务端**已经标成 `claimable`** 的奖励领掉（那是你自己干活换来的）。它**不创建任务、不代替你跑 AI 任务**：早先版本会用最低价模型在 AiPy 里批量建任务、再发一批带假任务头的 filler 请求把进度刷上去，社区 review 指出那是「farms a vendor's promotion on the user's account」，已整段删除。
-- **独立脚本**：`node scripts/aipy-daily.mjs` 看进度并领取已到手的奖励（加 `--dry-run` 只看不动）。进度不涨是正常的 —— 去客户端里干活。
+- **每日任务**：`daily_ai_1`（完成 1 次 AI 任务，50 灵石）、`daily_ai_5`（完成 5 次，150 灵石）。**trustoken 的「AI 任务」= AiPy Pro 的一个任务（会话）**：实测在 AiPy 里新建并执行一个任务，`daily_ai_5` 的 progress +1（3 → 4 → 5）。
+- **插件怎么补任务**：`auth.checkin` 通过 **AiPy 本机 API** `POST /api/aipy/createTask`（body 必须带 `force:true`，否则会复用最近那个空任务）自动创建缺口数量的任务，模型固定用最低价 `qwen3.8-flash`；创建后等 trustoken 结算进度，再把 50 / 150 灵石领掉。
+- **前提**：AiPy Pro 正在运行（Windows）。没运行时会降级为纯 API 补发（实测不推进进度），消息里会如实写。
+- **独立脚本**：`node scripts/aipy-daily.mjs`（加 `--dry-run` 只看进度）。适合 Windows 任务计划每天 08:05 跑一次。
 
 ---
 
@@ -91,18 +92,18 @@ magpie plugin add D:\主工作区\projects\magpie-trustoken-auth
 装完在 magpie 里：
 
 1. 供应商列表会多一行 **Trustoken（AiPy）**；
-2. 点登录 → 选 **手机号登录（短信验证码）**（会打开一扇浏览器窗口，滑块验证由你本人拖；插件不代解），填手机号；
+2. 点登录 → 选 **手机号注册 / 登录（短信验证码）**，填手机号；
 3. 登录后模型目录、灵石余额、签到按钮都会出现。
 
 ---
 
 ## 常见问题
 
-- **点登录没反应？** 插件会打开一扇**可见**的浏览器窗口并自动填表；你要收短信，并在 magpie 里填验证码。
-- **滑块验证码谁来做？** **你本人**。窗口里出现「请拖动滑块完成拼图」时，插件只提示、不代解 —— 代替用户解验证码属于绕过风控，已删除（连同读背景图找凹槽 + CDP 拖拽那一套）。拖完短信才会发出，然后填验证码即可。
+- **点登录没反应？** 插件直接调官方短信接口发码，不开浏览器；收不到短信就看 magpie 里返回的报错（风控 / 号码格式 / 频率限制）。
+- **新号能注册吗？** 能。服务端 `enabled_phone_register=true`，注册端点直接调是通的；网页上不让注册只是网页 UI 的 `WebRegisterEnabled=false`。详见 [docs/internals.md](./docs/internals.md) 十三。
 - **有账号还让我下载客户端？** 不会。本机已有 Trustoken 账号时，登录入口只留「本机登录（读取 AiPy 会话）」一个，点一下就把 AiPy Pro 客户端里已登录的号导入。
 - **签到一直失败？** 看北京时间是不是在 08:00–22:00 之外。窗口外插件返回失败，magpie 当天会重试。
-- **每日任务进度不动？** 这是正常的：trustoken 只认你在 AiPy Pro 客户端里**自己**创建并执行的任务（会话），插件不会替你建任务刷进度。进度够了以后 `auth.checkin` 会把奖励领掉。
+- **每日任务进度不动？** 先确认 AiPy Pro 正在运行。trustoken 只认 AiPy Pro 客户端创建的任务（会话）；插件通过 `POST /api/aipy/createTask` 自动建。AiPy 没运行时会降级为纯 API 补发，那种请求实测不推进进度。
 - **图片发不出去？** 插件把图片能力写死在 `qwen3.8-flash` / `kimi/kimi-k3`；用其他模型发图会被拒绝，这是故意的 —— trustoken 对不支持的模型会静默换模型，比报错更难查。
 
 ---
@@ -112,7 +113,7 @@ magpie plugin add D:\主工作区\projects\magpie-trustoken-auth
 | 来源 | 用在哪 |
 |---|---|
 | [magpie-plugin-scaffold](https://github.com/MYCF711/magpie-plugin-scaffold) | 插件骨架、九项钩子、`src/quota.mjs` / `src/chat.mjs` / `src/store.mjs`、check 与语义测试 |
-| [magpie-magicrew-auth](https://github.com/MYCF711/magpie-magicrew-auth) | `index.mjs` 只装配 + hooks 拆分结构、`browser-login.mjs` 的独立浏览器/CDP 登录骨架、`completeSignIn` 的返回形状 |
+| [magpie-magicrew-auth](https://github.com/MYCF711/magpie-magicrew-auth) | `index.mjs` 只装配 + hooks 拆分结构、独立浏览器/CDP 登录骨架（本仓库 0.3.6 起手机号登录改走官方接口，已不再带这套骨架）、`completeSignIn` 的返回形状 |
 | trustoken.cn 网页前端（`/assets/main-*.js`） | 签到 / 每日任务 / 令牌 / 登录端点与字段 |
 | Trustoken 活动中心与 `/api/status` | 灵石换算（500,000 quota = 1 元；100 灵石 = 1 元） |
 

@@ -1,3 +1,11 @@
+## 0.3.6
+
+- feat: **手机号入口改成官方注册接口**（`sendSmsCode` → `loginMobile` / `registerMobile`）：填手机号 → 收短信 → 填验证码，**新号自动完成注册**、老号直接登录。不再开浏览器窗口、不再需要装/启动 AiPy 客户端、不需要用户过滑块。调研依据：`/api/status` 的 `WebRegisterEnabled=false` 只关闭网页 UI 的注册入口，`enabled_phone_register=true` 仍允许手机号注册，注册端点直接 POST 没有客户端身份门（实测假验证码返回「验证码错误或已过期」），`turnstile_check=false`。
+- refactor: 删除 `src/browser-login.mjs`（951 行，自建 Chromium profile + CDP + 自动解滑块）—— 那条路只能登录已注册的号，正是主人说的「没意义」；`methods.mjs` 里对应的 PKCE / 表单注入 / OAuth 回调辅助函数一并删除。
+- feat: **恢复造任务 + filler**（主人 2026-10-30 明确「造任务和 filler 请求我要」）：`src/aipy-local.mjs` 恢复 `readAipyApiKey` / `findAipyPort` / `createAipyTask` / `ensureAipyTasks`（与 0.3.4 逐字一致），`src/hooks/checkin.mjs` 恢复补任务块与带 `Aipy-Task-ID` 的 filler 循环，`scripts/aipy-daily.mjs` 恢复刷任务器形态。
+- test: `tests/compliance.test.mjs` 更新口径 —— 取消对 `createTask` / `Aipy-Task-ID` / `ensureAipyTasks` / `solveSlider` 等的禁止，改成**正向锁**（造任务 + filler 必须在）；保留「账号身份 / magpie 私有文件 / 写死安装包直链」的禁止；新增「手机号入口走官方注册接口、浏览器登录链已删除」的断言。
+- docs: `docs/internals.md` 新增第十三节（调研四问 + 为什么不走 AiPy 壳 + 未验证项 + 造任务恢复的决策记录）。
+
 ## 0.3.5
 
 合规整改 —— `magpie-community/plugins` 收录 PR #527 的 review。收录被拒可以接受（Trustoken 是中转站），但 review 指出的插件自身问题必须修。主人的口径：**推荐码可以带，账号身份不能带。**
