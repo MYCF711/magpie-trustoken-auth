@@ -22,7 +22,7 @@ import { hasAccounts } from "../src/accounts.mjs"
 
 const C = { PROVIDER: "trustoken", PROVIDER_NAME: "Trustoken（AiPy）" }
 
-test("1) 入口集合：0 账号 → 2 个（本机/手机号注册登录，不再有下载）；有账号 → 只剩「本机登录」", () => {
+test("1) 入口集合恒定：0 账号和有账号都是 2 条（本机/弹窗），不收缩（magpie 索引不漂移）", () => {
   const none = makeMethods(C, { hasAccounts: () => false })
   assert.deepEqual(
     none.map((m) => m.label),
@@ -37,10 +37,19 @@ test("1) 入口集合：0 账号 → 2 个（本机/手机号注册登录，不�
   // 0.3.10 起不再挂载下载入口：弹窗能直接注册新号
   assert.ok(!none.some((m) => /下载|安装包/.test(m.label)), "不该再有下载入口")
 
+  // 0.3.12 修订坑 28 口径：有账号也不收缩 —— 收缩会让 magpie 按旧 index 点按钮时
+  // 错配到另一条入口（2026-10-31 实测：点弹窗却执行了本机登录的查重、报
+  // 「这个号已经在 magpie 里了」，浏览器不弹，第二个以后的号永远加不上）。
   const some = makeMethods(C, { hasAccounts: () => true })
-  assert.deepEqual(some.map((m) => m.label), ["Trustoken（AiPy） 本机登录（读取 AiPy 会话）"])
+  assert.deepEqual(
+    some.map((m) => m.label),
+    none.map((m) => m.label),
+    "入口集合必须与账号状态无关（形状恒定，index 永不漂移）",
+  )
+  assert.equal(some[0].type, "api")
+  assert.equal(some[1].type, "oauth")
   for (const m of some) {
-    assert.ok(!/下载|安装包|http/i.test(m.label), `有账号时不该出现下载相关入口：${m.label}`)
+    assert.ok(!/下载|安装包|http/i.test(m.label), `不该出现下载相关入口：${m.label}`)
   }
 })
 
