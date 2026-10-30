@@ -1,3 +1,9 @@
+## 0.3.14 — 2026-10-31
+
+- **修复：每日任务补任务逻辑从不触发——`locked` 状态被漏掉**。`src/hooks/checkin.mjs` 的 `gaps` 过滤只认 `in_progress`，但服务端把「未开始」的每日任务标成 `locked`（本机 5 个号实测全是 `daily_ai_1: 0/1 locked`、`daily_ai_5: 0/5 locked`）→ `gaps` 永远为空 → `ensureAipyTasks` 一次都不调用。修复：`taskGaps()` 同时认 `in_progress` 和 `locked`，等待循环同步改。
+- 实测（2026-10-31 02:47，AiPy Pro 2.1.1，端口 41970）：手动 `ensureAipyTasks({n:1})` 建 1 个任务，10 秒内 `daily_ai_1` 0/1 locked → **claimable 1/1**、`daily_ai_5` 0/5 locked → **in_progress 1/5**。⇒ `locked` = 未开始，不是锁死；建任务确实推进 progress。
+- test: 新增 `tests/checkin-tasks.test.mjs` 5 条（locked 算 gap / in_progress 算 gap / claimable·claimed·已达标不算 / 空输入 / 源码锁两处都走 taskGaps）。
+
 ## 0.3.13 — 2026-10-31
 
 - fix(test/CI): `tests/compliance.test.mjs` 的 `withHome` 补设 `HOME` —— ubuntu CI 上 `os.homedir()` 读的是 `HOME` 而不是 `USERPROFILE`，导致测试②把「旧版本写死身份」的文件写进临时目录、`defaultGroup()` 却去读真实的 `/home/runner/.cache/magpie`，断言 `expected '' actual '182238'`。这是 0.3.10 起 main 的 `rules` 一直红的原因（本机 Windows 不受影响，所以一直没发现）。

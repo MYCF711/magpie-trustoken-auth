@@ -114,6 +114,12 @@ PR 的 `rules` 检查全绿并合并后，才从与 `origin/main` 完全一致�
 |---|---|---|---|
 | 33 | 用户机器上一个 Chromium 内核浏览器都没有（或起窗口失败），弹窗注册只报「没找到浏览器」，用户完全没有出路 | `authorize()` 要返回**回退**：`{ url: 登录网址, opened: false, method: "code" }` —— `opened:false` 时 magpie 会自己用系统浏览器打开（`plugins.go:788`）；同时 `copyToClipboard(url)`（失败吞掉），instructions 写明「网址已复制」。**但系统浏览器拿不到 session cookie，通常不会自动导入**——必须如实写，并给两条出路：① 浏览器跳到 `aipy-pro://oauth?code=...` 时把整段粘回来（用这次落盘的 verifier 换 token）② 改用「本机登录（读取 AiPy 会话）」。回退**只在启动失败时触发**，能起窗口仍走弹窗。判据：`tests/browser-fallback.test.mjs` 4 条 | [`src/hooks/methods.mjs`](./src/hooks/methods.mjs) · [internals 14.7](./docs/internals.md) · `tests/browser-fallback.test.mjs` |
 
+再一条是 **2026-10-31 的每日任务状态**（`locked` 被漏掉，补任务永远不触发）：
+
+| # | 症状 | 判据 | 出处 |
+|---|---|---|---|
+| 34 | 每日任务 `daily_ai_1` / `daily_ai_5` 一直不动，`checkin` 也从没调用过 `ensureAipyTasks`；查 `GET /api/user/daily_tasks/status` 全是 `locked` | **`locked` = 未开始（正常初始态），不是锁死**：2026-10-31 实测建 1 个 AiPy 任务后 `locked 0/1 → claimable 1/1`、`locked 0/5 → in_progress 1/5`；前端 bundle 的 `Jb` 组件也把 `locked` 落到「去完成」分支。`gaps` 必须同时认 `in_progress` 和 `locked`（旧代码只认 `in_progress` → gaps 永远空）。判据：`tests/checkin-tasks.test.mjs` 5 条 | [`src/hooks/checkin.mjs`](./src/hooks/checkin.mjs) · [internals 5.1](./docs/internals.md) · `tests/checkin-tasks.test.mjs` |
+
 ---
 
 ## 三、命令
@@ -226,6 +232,7 @@ node scripts/probe-vision.mjs <provider/model> …
 | [`tests/invite-option.test.mjs`](./tests/invite-option.test.mjs) | 5 条邀请码开关锁：默认滚动 / 开关开固定 / 读抛错当关 / `auth.options` 与 `input.magpie.option` 接线 / 登录页只剩 phone prompt | 坑 31；`node --test` 自动跑 |
 | [`tests/browser-candidates.test.mjs`](./tests/browser-candidates.test.mjs) | 10 条浏览器探测锁：env 覆盖三态（优先/分号/别名变量）、Edge 双文件名 + scoop shim、PATH 扫描（引号/相对路径丢弃）、App Paths 兜底触发与跳过、去重、本机 scoop 回归锁 | 坑 32；`node --test` 自动跑 |
 | [`tests/browser-fallback.test.mjs`](./tests/browser-fallback.test.mjs) | 4 条回退锁：启动失败时 url 非空 + opened:false + 剪贴板 + instructions；能启动时仍走弹窗；剪贴板抛错不崩；空输入引导「本机登录」 | 坑 33；`node --test` 自动跑 |
+| [`tests/checkin-tasks.test.mjs`](./tests/checkin-tasks.test.mjs) | 5 条每日任务 gap 锁：`locked` 算 gap（0.3.14 实测 0/1→claimable、0/5→in_progress）/ `in_progress` 算 gap / claimable·claimed·达标不算 / 空输入 / 源码锁两处都走 `taskGaps` | 坑 34；`node --test` 自动跑 |
 
 **为什么 `src/quota.mjs` 值得单独一个文件**：额度窗口是 magpie **画卡片**和**智能路由排序**的同一个输入。
 写错不会崩，只会让卡片显示「剩余额度未知」、让这个号在路由里被当成不存在 —— 用户以为插件坏了，

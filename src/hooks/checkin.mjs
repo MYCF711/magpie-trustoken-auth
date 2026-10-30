@@ -7,7 +7,9 @@
 //
 // 每日任务（daily_ai_1 / daily_ai_5）的 progress 由 trustoken 服务端统计「AI 任务」。
 // 实测：普通 /chat/completions 请求、带 Aipy-Task-ID 的请求，都不增加 progress；
-// 只有 AiPy 客户端里真正完成的任务才算。所以插件在这里做的是：
+// 只有 AiPy 客户端里真正完成的任务才算。
+// 2026-10-31 实测：任务未开始时服务端返回 `locked`（不是 `in_progress`），建 AiPy 任务会推进它
+// —— `locked` 必须算 gap，否则 ensureAipyTasks 永远不触发（0.3.14 修复）。所以插件在这里做的是：
 //   ① 领取已经可领的奖励（确定有效）
 //   ② 用最低消费模型（qwen3.8-flash）补 gap 次极小请求（best effort）
 //   ③ 把服务端实际进度写回 message —— 不谎报完成
@@ -27,6 +29,23 @@ function beijingHour(date = new Date()) {
 
 function taskId() {
   return randomBytes(16).toString("base64url").replace(/[-_]/g, "x").slice(0, 21)
+}
+
+/**
+ * 哪些每日任务还需要「建 AiPy 任务」来推进。
+ *
+ * 2026-10-31 实测：服务端把未开始的任务标成 `locked`（不是 `in_progress`）——
+ * 建 1 个 AiPy 任务后 locked 0/1 → claimable 1/1、locked 0/5 → in_progress 1/5。
+ * 前端 bundle 的 `Jb` 组件也把 `locked` 落到「去完成」分支（点击打开 AiPy 主界面）。
+ * ⇒ `locked` 是「今天还没开始」的正常初始态，必须和 `in_progress` 一样算 gap；
+ *   漏掉它会让 ensureAipyTasks 一次都不触发（旧 bug）。
+ */
+export function taskGaps(tasks) {
+  return (tasks ?? []).filter(
+    (t) =>
+      (t.status === "in_progress" || t.status === "locked") &&
+      Number(t.progress) < Number(t.target),
+  )
 }
 
 export function makeCheckin(c) {
@@ -93,9 +112,7 @@ export function makeCheckin(c) {
       // AiPy 本地 API：POST /api/aipy/createTask，body 是参数数组，必须带 force:true
       // （不带 force 会复用最近那个空任务，不新建）。
       tasks = await dailyTaskStatus(token, uid)
-      const gaps = tasks.filter(
-        (t) => t.status === "in_progress" && Number(t.progress) < Number(t.target),
-      )
+      const gaps = taskGaps(tasks)
       if (gaps.length) {
         const need = Math.max(...gaps.map((t) => Number(t.target) - Number(t.progress)))
         const { ensureAipyTasks } = await import("../aipy-local.mjs")
@@ -107,7 +124,7 @@ export function makeCheckin(c) {
           for (let i = 0; i < 10; i++) {
             await sleep(3000)
             const now = await dailyTaskStatus(token, uid)
-            if (!now.some((t) => t.status === "in_progress" && Number(t.progress) < Number(t.target))) break
+            if (taskGaps(now).length === 0) break
           }
         } else {
           parts.push(`AiPy 本机任务不可用（${local.reason}）`)
