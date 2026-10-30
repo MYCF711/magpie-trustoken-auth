@@ -79,6 +79,12 @@ PR 的 `rules` 检查全绿并合并后，才从与 `origin/main` 完全一致�
 | 26 | 某个账号的上游偶发 400，**整轮直接失败、客户端会话被这个 400 打断**，同组别的账号一次都没被问；`~/.config/magpie/routing/<日期>.jsonl` 里这条 try 是 `status:400, fail:"other"`，error 写着 `bad response status code 400` | 上游用 400 说「渠道自己坏了」时，magpie 的 `retryable()` 400 分支只认 quotaWords / unservedWords / refusedWords / shapeWords / unsaidWords / regionWords / wrongEndpoint 那几组词，这句话一个都不命中 ⇒ 不换号、不 rest，直接把 400 摔给客户端。插件在 `loader` 的 `fetch` 里按语义翻译：钱（灵石 / 积分 / 点数 / 余额 / 额度 / 欠费 / 充值 / insufficient balance…）→ **402**；渠道坏了（`bad response status code` / `bad_response_status_code` / 无可用渠道）→ **502**；模型不存在 / 未开通 / 无权 → **404**（绝不 401）；400 里明说「每分钟 / 每秒」的限流 → **429**。**上下文过长与请求格式错误（`invalid_text_request`）原样放行** —— 换号一样失败，还会把「该压缩上下文」的信号弄丢。判据：`node tests/error-classify.mjs`；再看 routing jsonl，同一个 try 的 status 变成 402/502/404/429，且路由继续问下一个账号 | [`src/status.mjs`](./src/status.mjs) · [internals 十](./docs/internals.md) · `tests/error-classify.mjs` |
 | 27 | 给 loader 加了 `fetch` 之后，流式输出卡住 / 只有第一段就结束 | loader 的 `fetch` **只读 400/422 的响应体**（错误响应很小，且是 clone 出来读的），其余状态码连 `clone()` 都不做、`Response` 原对象交回去 —— 200 是 SSE 干流，读一下就废 | README 常见坑 5 · `tests/error-classify.mjs` 的「非 400/422 的响应体一个字都不读」 |
 
+再一条是 **2026-10-30 主人报的登录体验问题**（有账号还被下载链接挡人）：
+
+| # | 症状 | 判据 | 出处 |
+|---|---|---|---|
+| 28 | **已经有 Trustoken 账号，点「添加账号」却先让你选邀请码 / 填安装包下载链接**；反过来，账号全删光了「首次使用：下载客户端」却不出现 | magpie **没有**给插件的账号列表 API（`auth.loader/usage/checkin(getAuth)` 的 `getAuth()` 只给当前账号；插件工厂的 `input` 里没有账号），唯一口径是**只读** `~/.config/magpie/plugin-auth.json` 里的 `trustoken` / `trustoken#…`（magpie 自己也是这么算的：`providers.go:632` 每次 `Cached()` 现读）。口径：**有账号 → 只留「本机登录（读取 AiPy 会话）」一个入口**；**0 账号 → 才出现「首次使用：下载…」+ 本机登录 + 手机号登录**。三条硬规矩：① **读失败一律按「有账号」** —— 宁可少显示下载入口，也不要把下载链接挡在有账号的人面前；② `index.mjs` 用 `get methods()` 现算（magpie 每次 `providers` RPC 都读 `auth.methods`），**但 label 必须是稳定文案**（拼了动态邀请码会被缓存住，同坑 31 的族），动态信息放 `authorize()` 的 `instructions`；③ **行为层兜底**：即便某个 magpie 版本把列表缓存住了，下载入口的 `authorize()` 也会再判一次账号、**绝不返回下载链接**。判据：`node --test` 里 `tests/login-methods.test.mjs` 的 5 条（含「旧缓存下下载入口不给链接」）；本机实测有 5 个 trustoken 账号时 `hooks.auth.methods` 只有 1 条 | [`src/accounts.mjs`](./src/accounts.mjs) · [`src/hooks/methods.mjs`](./src/hooks/methods.mjs) · [internals 十一](./docs/internals.md) · `tests/login-methods.test.mjs` |
+
 ---
 
 ## 三、命令
@@ -185,6 +191,7 @@ node scripts/probe-vision.mjs <provider/model> …
 | [`src/quota.mjs`](./src/quota.mjs) | `usageWindow` / `usage` / `toIso` / `QuotaShapeError` | **把「写错不报错、但 GUI 和智能路由会坏」的五类窗口写法变成运行时错误** —— 见下方的表 |
 | [`tests/semantics.test.mjs`](./tests/semantics.test.mjs) | 26 条语义锁（含 6 条额度窗口 + 4 条上游错误码翻译） | `check.mjs` 查不到的那部分，只有它能拦 |
 | [`tests/error-classify.mjs`](./tests/error-classify.mjs) | 25 条上游 400/422 → 402/502/404/429 的翻译锁（报文是实测原文），含「非 400/422 一个字都不读」 | 坑 26 / 27；`npm test` 会一起跑 |
+| [`tests/login-methods.test.mjs`](./tests/login-methods.test.mjs) | 5 条登录入口分流锁：0 账号 3 入口 / 有账号 1 入口、`hasAccounts` 文件口径（坏 JSON 保守按有账号）、旧缓存下下载入口的行为层兜底、本机登录两种明确报错、label 去动态化 | 坑 28；`node --test` 自动跑 |
 
 **为什么 `src/quota.mjs` 值得单独一个文件**：额度窗口是 magpie **画卡片**和**智能路由排序**的同一个输入。
 写错不会崩，只会让卡片显示「剩余额度未知」、让这个号在路由里被当成不存在 —— 用户以为插件坏了，

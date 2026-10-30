@@ -184,3 +184,67 @@ DSH 侧的同一个请求（`session.v4.jsonl.zstd`，zstd 多帧，要用流式
 
 ⚠ **限流类不翻 402**：magpie 的 quotaWords 本来就认「限流/频率/rate limit/too many requests」，而 402 会被读成 failCredit（30 分钟）—— 把一次限流升级成「账户欠费半小时」是错的。上游把限流写成 400 且明说分钟窗口的，才翻 429。
 
+
+## 11. 实测：登录入口按「本机有没有账号」自动分流（2026-10-30）
+
+### 11.1 主人要的
+
+「添加账号点击之后太复杂了，应该是插件代码自动判断的，有账号就不应该弹出下载安装包连接；无法内置，只能 user 去软件里面打开，自己填邀请码注册新号，然后走插件导入桌面登录态。」
+
+### 11.2 旧状态（0.3.2 及以前）
+
+`src/hooks/methods.mjs` 4 个入口平铺，谁都没有账号判断：
+
+| 行 | 入口 | 问题 |
+|---|---|---|
+| 177 | `手机号登录（无头浏览器）` | 对新号被服务端硬拦（只能在客户端注册） |
+| 362 | `本机登录（读取 AiPy 会话）` | 正确的那条，但排在第 2 |
+| 392 | `复制邀请码（${inviteToUse()}）并下载客户端登录` | 有账号也照样弹：先问邀请码、再让填「安装包下载链接」 |
+| 442 | `邀请码` | 与第 392 行 100% 同一实现，纯重复 |
+
+`grep 无账号|hasAccount|accounts.length src/hooks/methods.mjs` = **0 命中**。
+
+### 11.3 magpie 没有账号列表 API
+
+- `auth.loader/usage/checkin(getAuth, provider)` 的 `getAuth()` 只给**当前账号**；
+- `auth.methods` 不带参数；插件工厂拿到的 `input` 是
+  `{ client, project: {...}, directory, worktree, experimental_workspace, serverUrl, $, magpie: { option, options } }`
+  （`internal/plugin/host.js:1210-1224`）—— 没有账号。
+- magpie 自己的账号列表在 `~/.config/magpie/plugin-auth.json`；`internal/plugin/providers.go:632`
+  每次 `Cached()` 都 `p.Accounts = accountsOf(readAuth(), p.ID)`，`accountsOf`（:686-707）按
+  `ProviderOf(key) == provider` 过滤 ⇒ 本插件 = `trustoken` + `trustoken#<slot>`。
+- ⇒ 插件侧唯一口径：**只读这个文件**（`src/accounts.mjs`）。本机实测 2026-10-30：
+  `['trustoken','trustoken#hpq1jt','trustoken#558mdj','trustoken#4jjysn','trustoken#81d2bj']` = 5 个账号。
+
+目录口径照 `internal/appdir/appdir.go:226-234`：`XDG_CONFIG_HOME/magpie` → `~/.config/magpie`。
+portable 模式（exe 旁带数据）插件侧拿不到 exe 路径，无法还原 —— 已知限制。
+
+### 11.4 现在的入口
+
+| 状态 | 入口 | 类型 | 行为 |
+|---|---|---|---|
+| 有账号（≥1） | `本机登录（读取 AiPy 会话）` | api keyless | 点一下直接导入：读 AiPy token → `fetchSelf` → 查重（同 uid 已在 magpie 就报错让用户切换）→ `ensureApiKey` → success |
+| 0 账号 | ① `首次使用：下载 AiPy Pro 客户端注册` | oauth | 问邀请码模式（0/自动、1/首选）→ 复制邀请码 + 给下载链接 → 轮询本机 token 10 分钟 → 自动导入 |
+| 0 账号 | ② `本机登录（读取 AiPy 会话）` | api keyless | 客户端已装好的人免下载 |
+| 0 账号 | ③ `手机号登录（无头浏览器）` | oauth | 已注册手机号直接登录（新号会被服务端拦，属已知） |
+
+删除了重复的「邀请码」入口；删除了下载流程里手填「安装包下载链接」的输入框（链接直接在 instructions 里）。
+
+### 11.5 为什么 label 不能带动态内容 + 行为层兜底
+
+- magpie 在插件加载时把 `methods[].label` 读走缓存（magicrew AGENTS 坑 31 实测）；旧 label 里的
+  `${inviteToUse()}` 会永远停在旧邀请码。⇒ label 全部稳定文案，动态邀请码进 `authorize()` 的
+  `instructions`（每次点击现算）。
+- 列表层用 `index.mjs` 的 `get methods()` 现算：`host.js:1881 methods(auth)` 每次 `providers` RPC
+  都读 `auth.methods`；`setAuth/removeAuth` 会 `send({event:"auth"})`（host.js:947-980）→
+  `host.dispatch case "auth": changed()`（host.go:1142-1143）→ `forgetProviders()`
+  （providers.go:249-258）→ 下次 `providers` RPC 重算。
+- **但本机装入版是 0.1.2145（checkout 是 v0.1.1775），不押注缓存刷新**：下载入口的
+  `authorize()` 里再判一次 `hasAccounts()` —— 有账号就 `url: ""`、`callback` 直接返回
+  `{type:"failed", error:"你已经有 Trustoken 账号了…"}`，**任何版本下都不会再给出下载链接**。
+  `tests/login-methods.test.mjs` 第 3 条把这一层单独钉住（不依赖 magpie 版本）。
+
+### 11.6 读失败的口径
+
+`plugin-auth.json` 读不到时：**文件不存在 = 0 个账号**（新机器）；**读/解析失败 = 按「有账号」**
+（宁可少显示下载入口，也不要把下载链接挡在有账号的人面前），并 warn 一次。
