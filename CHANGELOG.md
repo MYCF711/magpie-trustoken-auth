@@ -1,3 +1,7 @@
+## 0.3.15 — 2026-10-31
+
+- chore(release): 0.3.14 卡在 npm staged 状态（`npm publish` 报 `Cannot publish over previously staged version "0.3.14"`，`npm stage list` 查不到可批准条目），**同代码重发 0.3.15** —— 与 0.3.3 → 0.3.4 的处理方式一致。功能内容与 0.3.14 相同（`locked` 纳入每日任务 gaps）。
+
 ## 0.3.14 — 2026-10-31
 
 - **修复：每日任务补任务逻辑从不触发——`locked` 状态被漏掉**。`src/hooks/checkin.mjs` 的 `gaps` 过滤只认 `in_progress`，但服务端把「未开始」的每日任务标成 `locked`（本机 5 个号实测全是 `daily_ai_1: 0/1 locked`、`daily_ai_5: 0/5 locked`）→ `gaps` 永远为空 → `ensureAipyTasks` 一次都不调用。修复：`taskGaps()` 同时认 `in_progress` 和 `locked`，等待循环同步改。
