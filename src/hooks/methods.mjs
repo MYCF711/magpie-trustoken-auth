@@ -117,10 +117,20 @@ export function makeMethods(c, deps = {}) {
           validate: (v) =>
             /^1\d{10}$/.test(String(v || "").replace(/[\s-]/g, "")) ? undefined : "11 位手机号，只要数字",
         },
+        // 邀请码：留空 = 自动（跟随最近登录/签到的号，否则用作者码）；填了 = 指定这个码。
+        // 与「首次使用：下载客户端注册」那条的语义一致，见 src/invite.mjs 的 saveInviteChoice。
+        {
+          type: "text",
+          key: "invite",
+          message: "邀请码（可选）",
+          placeholder: modeHint(),
+        },
       ],
       async authorize(inputs) {
         const phone = String(inputs?.phone || "").replace(/[\s-]/g, "")
         if (!/^1\d{10}$/.test(phone)) throw new Error("手机号不完整")
+        // 留空 / 0 = 自动；填了 = 指定。与「首次使用：下载」那条同一套策略。
+        saveInviteChoice(inputs?.invite)
         const inviteCode = inviteToUse()
         const group = pickGroup()
         const account = maskPhone(phone)
