@@ -1,6 +1,6 @@
 {
   "name": "magpie-trustoken-auth",
-  "version": "0.3.1",
+  "version": "0.3.2",
   "description": "Trustoken / AiPy for magpie — phone-code sign-in, the account's live model list, 灵石 balance, auto check-in and daily-task rewards. DeepSeek / Qwen / GLM / Doubao / Kimi / Hunyuan.",
   "type": "module",
   "main": "./index.mjs",
@@ -52,7 +52,8 @@
     "autoCheckin": true
   },
   "scripts": {
-    "test": "node --test",
+    "test": "node --test && node tests/error-classify.mjs",
+    "test:errors": "node tests/error-classify.mjs",
     "score": "node scripts/score.mjs",
     "release": "node scripts/release.mjs",
     "maintenance": "node scripts/check-maintenance.mjs"

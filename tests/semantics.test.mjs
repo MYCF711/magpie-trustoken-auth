@@ -11,6 +11,8 @@ import { ApiError, read, asModelError } from "../src/api.mjs"
 import { withUsage, singleShotToSSE, normalizeUsage } from "../src/chat.mjs"
 import { usage, usageWindow, QuotaShapeError } from "../src/quota.mjs"
 import { makeLoader } from "../src/hooks/loader.mjs"
+import { classifyRefusal, rewriteRefusal } from "../src/status.mjs"
+import { TrustokenAuthPlugin } from "../index.mjs"
 
 // ── 倍率 ──────────────────────────────────────────────────────────────
 
@@ -144,3 +146,60 @@ test("loader: oauth 用 apiKey，api 类型用 key", async () => {
   assert.equal((await l(async () => ({ type: "api", key: "Uayl-key" }))).apiKey, "Uayl-key")
   assert.deepEqual(await l(async () => null), {})
 })
+
+// ── 上游 400 的翻译（详见 src/status.mjs 顶部与 tests/error-classify.mjs） ──
+
+test("status: 渠道坏了（bad response status code）→ 502，钱 → 402，模型 → 404", () => {
+  const channel = '{"error":{"code":"bad_response_status_code","message":"bad response status code 400 (request id: 1). 出错了！"}}'
+  assert.equal(classifyRefusal(400, channel), 502)
+  assert.equal(classifyRefusal(400, "您的灵石余额不足，请充值"), 402)
+  assert.equal(classifyRefusal(400, "模型 deepseek-flash 不存在或未开通"), 404)
+  assert.equal(classifyRefusal(422, "每分钟最多请求 60 次"), 429)
+})
+
+test("status: 请求格式错误 / 上下文过长 / 非 400·422 一律不动", () => {
+  assert.equal(classifyRefusal(400, '{"error":{"code":"invalid_text_request","message":"field messages is required"}}'), 0)
+  assert.equal(classifyRefusal(400, "This model's maximum context length is 262144 tokens"), 0)
+  for (const s of [200, 401, 403, 404, 408, 429, 500, 503]) {
+    assert.equal(classifyRefusal(s, "bad response status code 400"), 0, `${s} 不该被改写`)
+  }
+})
+
+test("status: 不改写的响应原对象返回，且不读它的 body", async () => {
+  let pulls = 0
+  const body = new ReadableStream({
+    start(c) {
+      c.enqueue(new TextEncoder().encode("data: [DONE]\n\n"))
+      c.close()
+    },
+    pull() {
+      pulls++
+    },
+  })
+  const res = new Response(body, { status: 200 })
+  assert.equal(await rewriteRefusal(res), res)
+  assert.equal(pulls, 0)
+  await res.body.cancel()
+})
+
+test("status: 改写的响应保住原文，摘掉 content-length", async () => {
+  const text = '{"error":{"code":"bad_response_status_code","message":"bad response status code 400"}}'
+  const res = await rewriteRefusal(
+    new Response(text, { status: 400, headers: { "content-length": String(text.length) } }),
+  )
+  assert.equal(res.status, 502)
+  assert.equal(await res.text(), text)
+  assert.equal(res.headers.get("content-length"), null)
+  assert.equal(res.headers.get("x-trustoken-vendor-status"), "400")
+})
+
+test("plugin: 装配出来的 loader 带 fetch（不带的话 400 又没人翻译了）", async () => {
+  const plugin = await TrustokenAuthPlugin()
+  assert.equal(typeof plugin.auth.loader, "function")
+  const opts = await plugin.auth.loader(async () => ({ type: "api", key: "Uayl-test" }))
+  assert.equal(typeof opts.fetch, "function")
+  assert.equal(opts.baseURL, "https://api.trustoken.cn/v1")
+  assert.equal(opts.apiKey, "Uayl-test")
+})
+
+

@@ -72,6 +72,13 @@ PR 的 `rules` 检查全绿并合并后，才从与 `origin/main` 完全一致�
 | 24 | **卡片上额度正常，路由页里这个号却是「剩余额度未知」，还总排在别人后面** | 窗口标了 `aside: true`（或 `used` 缺省被判成 `Text`）⇒ `allowanceOf()` 整条跳过 ⇒ `routedAllowance` 不 ok ⇒ `weighed()` 不设 `Known`。**`aside` 不是「不参与排序」，是「这个号在路由里不存在」**。判据：`curl -s http://127.0.0.1:3425/v1/magpie/trace` 看这个 provider 的 `known` 是 `true` 还是**字段缺失**；`~/.config/magpie/quotas.json` 的 `spans` 是 `[{}]` 还是 `[{"aside":true}]` | HOOKS 三 · 规矩 ① |
 | 25 | **模型明明收不了图，却被当成能收图**：截图直发上游报 `The request model is not multimodal` / 400，或者模型回「图片无法查看」 | 模型条目的 `capabilities.input.image` **必须写成布尔值**：省略不等于 text，等于「厂商未表态」，magpie 会拿 models.dev 的裸模型 id 投票补 —— 同名模型在别家标过 `image`，这个模型就会被带成能收图。text-only 模板见 HOOKS 十一之三；反向的手动覆盖（厂商说 `false` 却勾了 `Accepts images`）在 magpie 侧暂无警告 | HOOKS 十一之三 · CHECKLIST A-14 |
 
+再两条是 **2026-10-30 实测**出来的 —— 上游用 400 说「这条不是我该回的错误」时，插件不翻译就没人翻译：
+
+| # | 症状 | 判据 | 出处 |
+|---|---|---|---|
+| 26 | 某个账号的上游偶发 400，**整轮直接失败、客户端会话被这个 400 打断**，同组别的账号一次都没被问；`~/.config/magpie/routing/<日期>.jsonl` 里这条 try 是 `status:400, fail:"other"`，error 写着 `bad response status code 400` | 上游用 400 说「渠道自己坏了」时，magpie 的 `retryable()` 400 分支只认 quotaWords / unservedWords / refusedWords / shapeWords / unsaidWords / regionWords / wrongEndpoint 那几组词，这句话一个都不命中 ⇒ 不换号、不 rest，直接把 400 摔给客户端。插件在 `loader` 的 `fetch` 里按语义翻译：钱（灵石 / 积分 / 点数 / 余额 / 额度 / 欠费 / 充值 / insufficient balance…）→ **402**；渠道坏了（`bad response status code` / `bad_response_status_code` / 无可用渠道）→ **502**；模型不存在 / 未开通 / 无权 → **404**（绝不 401）；400 里明说「每分钟 / 每秒」的限流 → **429**。**上下文过长与请求格式错误（`invalid_text_request`）原样放行** —— 换号一样失败，还会把「该压缩上下文」的信号弄丢。判据：`node tests/error-classify.mjs`；再看 routing jsonl，同一个 try 的 status 变成 402/502/404/429，且路由继续问下一个账号 | [`src/status.mjs`](./src/status.mjs) · [internals 十](./docs/internals.md) · `tests/error-classify.mjs` |
+| 27 | 给 loader 加了 `fetch` 之后，流式输出卡住 / 只有第一段就结束 | loader 的 `fetch` **只读 400/422 的响应体**（错误响应很小，且是 clone 出来读的），其余状态码连 `clone()` 都不做、`Response` 原对象交回去 —— 200 是 SSE 干流，读一下就废 | README 常见坑 5 · `tests/error-classify.mjs` 的「非 400/422 的响应体一个字都不读」 |
+
 ---
 
 ## 三、命令
@@ -176,7 +183,8 @@ node scripts/probe-vision.mjs <provider/model> …
 | [`src/chat.mjs`](./src/chat.mjs) | `passThrough` / `withUsage` / `singleShotToSSE` / `normalizeUsage` | 流式三坑：读干流、漏 `include_usage`、`stream:false` 不被接受 |
 | [`src/store.mjs`](./src/store.mjs) | `fileOf` / `readJson` / `writeJson` + 快照 / 登录态 / 一次性标记三件套 | 只写 `~/.cache/magpie`、文件名带账号、原子写、可整目录删 |
 | [`src/quota.mjs`](./src/quota.mjs) | `usageWindow` / `usage` / `toIso` / `QuotaShapeError` | **把「写错不报错、但 GUI 和智能路由会坏」的五类窗口写法变成运行时错误** —— 见下方的表 |
-| [`tests/semantics.test.mjs`](./tests/semantics.test.mjs) | 22 条语义锁（含 6 条额度窗口） | `check.mjs` 查不到的那部分，只有它能拦 |
+| [`tests/semantics.test.mjs`](./tests/semantics.test.mjs) | 26 条语义锁（含 6 条额度窗口 + 4 条上游错误码翻译） | `check.mjs` 查不到的那部分，只有它能拦 |
+| [`tests/error-classify.mjs`](./tests/error-classify.mjs) | 25 条上游 400/422 → 402/502/404/429 的翻译锁（报文是实测原文），含「非 400/422 一个字都不读」 | 坑 26 / 27；`npm test` 会一起跑 |
 
 **为什么 `src/quota.mjs` 值得单独一个文件**：额度窗口是 magpie **画卡片**和**智能路由排序**的同一个输入。
 写错不会崩，只会让卡片显示「剩余额度未知」、让这个号在路由里被当成不存在 —— 用户以为插件坏了，
