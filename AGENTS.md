@@ -83,7 +83,7 @@ PR 的 `rules` 检查全绿并合并后，才从与 `origin/main` 完全一致�
 
 | # | 症状 | 判据 | 出处 |
 |---|---|---|---|
-| 28 | **已经有 Trustoken 账号，点「添加账号」却先让你选邀请码 / 填安装包下载链接**；反过来，账号全删光了「首次使用：下载客户端」却不出现 | magpie **没有**给插件的账号列表 API（`auth.loader/usage/checkin(getAuth)` 的 `getAuth()` 只给当前账号；插件工厂的 `input` 里没有账号），唯一口径是**只读** `~/.config/magpie/plugin-auth.json` 里的 `trustoken` / `trustoken#…`（magpie 自己也是这么算的：`providers.go:632` 每次 `Cached()` 现读）。口径：**有账号 → 只留「本机登录（读取 AiPy 会话）」一个入口**；**0 账号 → 才出现「首次使用：下载…」+ 本机登录 + 手机号登录**。三条硬规矩：① **读失败一律按「有账号」** —— 宁可少显示下载入口，也不要把下载链接挡在有账号的人面前；② `index.mjs` 用 `get methods()` 现算（magpie 每次 `providers` RPC 都读 `auth.methods`），**但 label 必须是稳定文案**（拼了动态邀请码会被缓存住，同坑 31 的族），动态信息放 `authorize()` 的 `instructions`；③ **行为层兜底**：即便某个 magpie 版本把列表缓存住了，下载入口的 `authorize()` 也会再判一次账号、**绝不返回下载链接**。判据：`node --test` 里 `tests/login-methods.test.mjs` 的 5 条（含「旧缓存下下载入口不给链接」）；本机实测有 5 个 trustoken 账号时 `hooks.auth.methods` 只有 1 条 | [`src/accounts.mjs`](./src/accounts.mjs) · [`src/hooks/methods.mjs`](./src/hooks/methods.mjs) · [internals 十一](./docs/internals.md) · `tests/login-methods.test.mjs` |
+| 28 | **（0.3.12 修订口径）历史场景：有账号时还弹下载链接挡人；现症（2026-10-31 实测）：第一个号之后点「弹窗注册」却报「本机 AiPy 当前登录的是…已经在 magpie 里了」、浏览器不弹，第二个以后的号永远加不上** | **入口集合必须恒定不收缩**：0 账号和有账号都返回同样的 2 条（本机登录 + 弹窗注册），顺序不变。原因：magpie 登录页按 methods 的**位置**（页面渲染时的 index）调插件，插件每次 providers RPC 现算列表——第一个号加上后若收缩成 1 条，点「弹窗」（旧 index）就错配到现算列表的另一条。坑 28 原口径「有账号 → 只留本机登录」的前提是下载入口挡人，0.3.10 下载入口已删、0.3.7 起弹窗能注册新号，前提不复存在；查重仍在本机登录 authorize() 里（客户端停在同一号上时明确报错，不静默）。label 稳定文案、行为层兜底的规矩不变。判据：`node --test` 里 `tests/login-methods.test.mjs` 测试 1（0 账号/有账号输出 deepEqual） | [`src/hooks/methods.mjs`](./src/hooks/methods.mjs) · [`src/accounts.mjs`](./src/accounts.mjs) · [internals 十一](./docs/internals.md) · `tests/login-methods.test.mjs` |
 
 再一条是 **magpie-community/plugins PR #527 的 review**（2026-10-30，收录被拒但问题必须修）：
 
@@ -214,7 +214,7 @@ node scripts/probe-vision.mjs <provider/model> …
 | [`src/quota.mjs`](./src/quota.mjs) | `usageWindow` / `usage` / `toIso` / `QuotaShapeError` | **把「写错不报错、但 GUI 和智能路由会坏」的五类窗口写法变成运行时错误** —— 见下方的表 |
 | [`tests/semantics.test.mjs`](./tests/semantics.test.mjs) | 26 条语义锁（含 6 条额度窗口 + 4 条上游错误码翻译） | `check.mjs` 查不到的那部分，只有它能拦 |
 | [`tests/error-classify.mjs`](./tests/error-classify.mjs) | 25 条上游 400/422 → 402/502/404/429 的翻译锁（报文是实测原文），含「非 400/422 一个字都不读」 | 坑 26 / 27；`npm test` 会一起跑 |
-| [`tests/login-methods.test.mjs`](./tests/login-methods.test.mjs) | 4 条登录入口分流锁：0 账号 2 入口（本机 / 手机号弹窗，无下载）/ 有账号 1 入口、`hasAccounts` 文件口径（坏 JSON 保守按有账号）、本机登录两种明确报错、label 去动态化 | 坑 28；`node --test` 自动跑 |
+| [`tests/login-methods.test.mjs`](./tests/login-methods.test.mjs) | 4 条登录入口锁：**入口集合恒定 2 条（0 账号/有账号输出 deepEqual，index 不漂移）**、`hasAccounts` 文件口径（坏 JSON 保守按有账号）、本机登录两种明确报错、label 去动态化 | 坑 28；`node --test` 自动跑 |
 | [`tests/compliance.test.mjs`](./tests/compliance.test.mjs) | 5 条口径锁：推荐码可带 / 账号身份不可带、不读 magpie 私有账号文件、**造任务+filler 必须在（正向锁）**、**不再有下载入口**、**手机号入口走受控浏览器弹窗注册** | 坑 29；`node --test` 自动跑 |
 | [`tests/register-flow.test.mjs`](./tests/register-flow.test.mjs) | 7 条弹窗注册判据锁：verifier 43 字符 + SHA256 challenge、AiPy UA、trustoken `session` cookie、302 `aipy-pro://oauth?code=`、`expires_in ≈ 2592000`、body 只读一次、**UA 请求层覆盖与头重写** | 坑 30；`node --test` 自动跑 |
 | [`tests/invite-option.test.mjs`](./tests/invite-option.test.mjs) | 5 条邀请码开关锁：默认滚动 / 开关开固定 / 读抛错当关 / `auth.options` 与 `input.magpie.option` 接线 / 登录页只剩 phone prompt | 坑 31；`node --test` 自动跑 |

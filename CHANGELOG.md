@@ -1,3 +1,8 @@
+## 0.3.12 — 2026-10-31
+
+- **修复：第一个号之后再也加不上号（点弹窗却报「本机 AiPy 当前登录的是…已经在 magpie 里了」，浏览器不弹）** —— 根因是**入口集合收缩导致 magpie 位置索引漂移**：旧口径（坑 28）「有账号 → 只留本机登录 1 条」，而 magpie 的登录页按 methods 的**位置**调插件（页面渲染时的 index）、插件每次 providers RPC 现算列表。第一个号加上后列表收缩成 1 条，用户点「弹窗」按钮（旧 index）就错配到现算列表的另一条——实测执行了本机登录的查重、读到 AiPy 客户端还登录着的第一个号、报「这个号已经在 magpie 里了」，浏览器根本不弹。**修订口径：入口集合恒定两条（本机登录 + 弹窗注册），与账号状态无关** —— 形状恒定 = 任何 index 永不漂移；这也是下载入口删除后坑 28 口径的必然结果（它防的「下载挡人」前提已不存在）。查重仍在本机登录 authorize() 里做，行为不变。
+- test: `tests/login-methods.test.mjs` 测试 1 改为锁「0 账号和有账号输出完全一致（形状恒定）」；其余 3 条不动（本机登录 index 0 未变）。
+
 ## 0.3.11 — 2026-10-31
 
 - **修复：弹窗注册报「没找到 Chromium 内核浏览器」，但机器上明明装了浏览器** —— 旧的 `browserCandidates()` 在 Windows 只查 5 条写死路径（Program Files / LOCALAPPDATA 下的 Chrome、Edge 的 `msedge.exe`），三处盲区全踩：① scoop 安装的 Chromium（`%USERPROFILE%\scoop\shims\chromium.exe`，且 scoop 会把 shims 加进 PATH，Windows 分支却完全不扫 PATH —— linux 分支用 `command -v` 扫了，Windows 漏了）；② 本机 Edge 主程序叫 `Microsoft Edge.exe` 而不是 `msedge.exe`（注册表 `App Paths\msedge.exe` 证实）；③ 用户照 magpie 生态文案设的 `MAGPIE_LINGXI_BROWSER` 环境变量插件根本不认。现在按优先级：**env 覆盖（`MAGPIE_LINGXI_BROWSER` / `MAGPIE_TRUSTOKEN_BROWSER`，分号分隔、不过滤存在性）→ 固定路径（Edge 双文件名 + scoop shim + Chromium 每用户 + Brave/360极速）→ Windows PATH 扫描 → 注册表 App Paths 兜底**。本机实测命中 Edge（改名）与 scoop Chromium 两个候选。
