@@ -17,15 +17,22 @@
 //   都会读 auth.methods）；但**行为层还有第二道兜底** —— 下载入口的 authorize() 会
 //   再判一次账号，有账号时绝不返回下载链接。
 //
-// 手机号登录流程（无账号时的入口之一）：
+// 手机号注册 / 登录流程（无账号时的入口之一，2026-10-30 e2e 实测版）：
 //   1. 用户在 magpie 里填手机号；
-//   2. 插件在后台（headless Chromium）打开 Trustoken 官方登录页；
-//   3. 自动填手机号、勾选协议、填邀请码；
-//   4. 点「获取验证码」→ 自动解滑块 → 短信发出；
-//   5. 用户在 magpie 里填验证码；
-//   6. 插件自动填验证码、点「立即登录」，捕获登录响应，创建 API Key。
+//   2. 插件起一个**受控 Chromium 窗口**（AiPy 客户端 UA + 独立 profile），
+//      打开 /api/oauth/authorize → 307 到 /oauth/login（该页会把 sessionStorage.layout 设为 "false"，
+//      前端才会走 /api/user/register/mobile —— 新号注册的第二道门）；
+//   3. 用户在窗口里完成注册/登录（滑块、短信、微信扫码都在这扇窗口里，插件不代解）；
+//   4. 插件轮询到 localStorage.user 后，用 CDP Storage.getCookies 拷 trustoken 的 session cookie；
+//   5. node 里带 cookie + AiPy UA 重新 GET authorize（redirect:manual）→ 读 302 Location 里的 code；
+//   6. POST /api/oauth/token（code + verifier）→ access_token → /api/user/self → /api/token/ → api_key；
+//   7. completeSignIn 导入 magpie；关窗口、删一次性 profile、删 verifier 落盘记录。
+// 详见 docs/internals.md 十四。
 
-import { fetchSelf, ensureApiKey, sendSmsCode, loginMobile, registerMobile } from "../api.mjs"
+import { fetchSelf, ensureApiKey } from "../api.mjs"
+import { makePkce, authorizeUrlFor, fetchOAuthCode, exchangeOAuthCode, tokenExpiry, AIPY_REDIRECT_URI } from "../oauth.mjs"
+import { launchLoginWindow, aipyUserAgent, pickSessionCookie } from "../browser-login.mjs"
+import { fileOf, readJson, writeJson, removeJson } from "../store.mjs"
 import { readTrustokenToken } from "../aipy-local.mjs"
 import { execFileSync } from "node:child_process"
 import { inviteToUse, rollInvite, modeHint, saveInviteChoice, isKnownAccount } from "../invite.mjs"
@@ -100,7 +107,7 @@ export function makeMethods(c, deps = {}) {
   const out = [
     {
       type: "oauth",
-      label: `${c.PROVIDER_NAME} 手机号注册 / 登录（短信验证码）`,
+      label: `${c.PROVIDER_NAME} 手机号注册 / 登录（弹窗）`,
       prompts: [
         {
           type: "text",
@@ -116,34 +123,49 @@ export function makeMethods(c, deps = {}) {
         if (!/^1\d{10}$/.test(phone)) throw new Error("手机号不完整")
         const inviteCode = inviteToUse()
         const group = pickGroup()
+        const account = maskPhone(phone)
 
-        // ⚠ 这条入口当前**已知不通，仅占位**（2026-10-30 两次实测）：
-        //   · 网页点「获取验证码」先弹滑块（/api/captcha → /api/captcha/check），过完仍提示要 AiPy 客户端；
-        //   · 直接 POST /api/sms/code 缺滑块 token 恒 400 {"success":false}；
-        //   · 请求头 / UA / TLS 伪装都试过，无效（不是头的问题）。
-        // 保留代码是为了以后有人接续研究；新号目前只能在 AiPy Pro 客户端里注册，再用「本机登录」导入。
-        // 详见 docs/internals.md 十三。
-        await sendSmsCode(phone)
+        // ⚠ 文档坑 5.2：verifier 必须先落盘。进程被杀后服务端 session 里还挂着旧的授权请求，
+        //   只存内存会丢；同一手机号 10 分钟内复用同一对 PKCE，避免被弹回旧授权页。
+        const pkceFile = fileOf("oauth-pkce", { siteId: "trustoken", account })
+        const saved = readJson(pkceFile, null)
+        const reusable =
+          saved?.verifier && saved?.challenge && Date.now() - Date.parse(saved.at || 0) < 10 * 60_000
+        const { verifier, challenge } = reusable ? saved : makePkce()
+        if (!reusable) writeJson(pkceFile, { verifier, challenge, account, at: new Date().toISOString() })
+
+        let win
+        try {
+          win = await launchLoginWindow(authorizeUrlFor(challenge))
+        } catch (e) {
+          removeJson(pkceFile)
+          throw new Error(`打不开注册窗口：${String(e?.message ?? e).slice(0, 300)}`)
+        }
 
         return {
           url: "",
           opened: true,
-          method: "code",
-          instructions: `验证码已发送到 ${maskPhone(phone)}。把短信里的验证码填到下面：新号自动完成注册，老号直接登录。邀请码：${inviteCode || "无"}。`,
-          async callback(code) {
-            const c0 = String(code || "").replace(/\D/g, "")
-            if (c0.length < 4) return { type: "failed", error: "验证码是 4~8 位数字" }
+          method: "auto",
+          instructions: `已打开注册窗口（带 AiPy 客户端 UA）：新手机号会自动走注册，老号直接登录。在网页里完成验证后不用再点任何东西，插件会自动导入。邀请码：${inviteCode || "无"}。`,
+          async callback() {
             try {
-              let body
-              try {
-                // 老号走登录（正常路径）；新号会被「账号不存在」拦下 → 改走注册
-                body = await loginMobile(phone, c0, inviteCode)
-              } catch {
-                body = await registerMobile(phone, c0, inviteCode)
-              }
-              return await completeSignIn(c, body?.data ?? body, { group, affCode: inviteCode })
+              await win.waitForLogin({ timeout: 5 * 60_000 })
+              const cookies = await win.getCookies()
+              const session = pickSessionCookie(cookies)
+              // 浏览器里拦不到 aipy-pro:// 导航（文档 5.1）：在 node 里补签 302
+              const code = await fetchOAuthCode({ challenge, sessionCookie: session, userAgent: aipyUserAgent() })
+              const tokenJson = await exchangeOAuthCode({ code, verifier, redirectUri: AIPY_REDIRECT_URI })
+              const tok = tokenExpiry(tokenJson)
+              removeJson(pkceFile)
+              return await completeSignIn(
+                c,
+                { access_token: tok.accessToken, refresh_token: tok.refreshToken || tok.accessToken, expires_in: tok.expiresIn },
+                { group, affCode: inviteCode },
+              )
             } catch (e) {
               return { type: "failed", error: String(e?.message ?? e).slice(0, 500) }
+            } finally {
+              await win.close().catch(() => {})
             }
           },
         }

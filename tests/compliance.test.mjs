@@ -115,7 +115,7 @@ test("④ 建任务 + filler 保持恢复（主人 2026-10-30 明确要）：正
   assert.match(daily, /ensureAipyTasks/, "scripts/aipy-daily.mjs 应保留建任务路径")
 })
 
-test("⑤ 下载跳官方页；手机号入口走官方注册接口（不经过浏览器 / AiPy 壳）", async () =>
+test("⑤ 下载跳官方页；手机号入口走受控浏览器注册链路（弹窗）", async () =>
   withHome(async () => {
     const { makeMethods } = await import("../src/hooks/methods.mjs")
     const methods = makeMethods(
@@ -128,14 +128,18 @@ test("⑤ 下载跳官方页；手机号入口走官方注册接口（不经过�
     assert.equal(res.url, "https://www.aipyaipy.com/", "下载入口必须跳官方下载页")
     assert.ok(!/\.exe|downloads\//i.test(res.url), "不许再写死安装包直链")
 
-    // 手机号入口还在，但背后是官方注册/登录接口 —— 这是「能注册新号」的唯一实现
+    // 手机号入口还在，背后是「受控 Chromium + session cookie + node 补签 code」的注册链路
     const phone = methods.find((m) => /手机号/.test(m.label))
     assert.ok(phone, "手机号入口必须保留（主人 2026-10-30 定的成品形态）")
     assert.match(phone.label, /注册/, "入口要写明它也能注册新号")
     const src = read("src/hooks/methods.mjs")
-    for (const w of ["sendSmsCode", "registerMobile", "loginMobile"]) {
+    for (const w of ["makePkce", "authorizeUrlFor", "fetchOAuthCode", "launchLoginWindow", "pickSessionCookie"]) {
       assert.ok(src.includes(w), `methods.mjs 应调用 ${w}`)
     }
-    // 我们自己的浏览器登录链已删除：它只能登老号，且要开浏览器窗口
-    assert.throws(() => read("src/browser-login.mjs"), "src/browser-login.mjs 应已删除")
+    assert.ok(!src.includes("sendSmsCode"), "不要再走必然 400 的纯 API 短信链")
+    // 受控浏览器（CDP）必须是新的注册链：起窗口 → 等登录 → 拷 session cookie
+    const browser = read("src/browser-login.mjs")
+    for (const w of ["launchLoginWindow", "Storage.getCookies", "pickSessionCookie", "aipyUserAgent"]) {
+      assert.ok(browser.includes(w), `src/browser-login.mjs 应包含 ${w}（受控浏览器注册链）`)
+    }
   }))
