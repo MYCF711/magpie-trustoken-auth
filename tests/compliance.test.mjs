@@ -39,8 +39,10 @@ async function withHome(fn) {
   const home = mkdtempSync(join(tmpdir(), "trustoken-compliance-"))
   const oldProfile = process.env.USERPROFILE
   const oldAppData = process.env.APPDATA
+  const oldHome = process.env.HOME // ubuntu CI 上 os.homedir() 读的是 HOME，不是 USERPROFILE
   process.env.USERPROFILE = home
   process.env.APPDATA = join(home, "AppData", "Roaming")
+  process.env.HOME = home
   try {
     return await fn(home)
   } finally {
@@ -48,6 +50,8 @@ async function withHome(fn) {
     else process.env.USERPROFILE = oldProfile
     if (oldAppData === undefined) delete process.env.APPDATA
     else process.env.APPDATA = oldAppData
+    if (oldHome === undefined) delete process.env.HOME
+    else process.env.HOME = oldHome
     rmSync(home, { recursive: true, force: true })
   }
 }
