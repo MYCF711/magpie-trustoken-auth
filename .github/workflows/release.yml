@@ -117,6 +117,9 @@ jobs:
     needs: release
     steps:
       - uses: actions/checkout@v4
+        with:
+          # 重跑/手动触发时也要检出被发布的那个 tag，而不是默认分支
+          ref: ${{ inputs.tag || github.ref }}
       - uses: actions/setup-node@v4
         with:
           node-version: 22
