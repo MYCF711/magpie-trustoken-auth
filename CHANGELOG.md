@@ -1,3 +1,11 @@
+## 0.3.20 — 2026-10-31
+
+- **依赖键与显示名分家**（主人 + Lead 2026-10-31 定稿）：
+  - `package.json.name` = **`magpie-trustoken-auth`**（ASCII slug）—— bun 的依赖键必须是 ASCII：实测 `bun update "爱派AiPy"` / `"讯飞Loomy"` 都报 `unrecognised dependency format`（`bun install` 能吃中文键，但 magpie 的 `reinstall()` 走 `bun update <key>`）。
+  - `magpie.name` = **`爱派 AiPy`**（显示名；magpie 卡片标题读它）。
+  - provider `name` 保持 **`爱派 AiPy`**。
+  - 删除 `publish-npm.mjs` / `scripts/publish-npm.mjs` 与 `publish:npm` 脚本：`name` 已是 npm 包名，发布无需换名。
+
 ## 0.3.19 — 2026-10-31
 
 - **依赖键必须是「无空格」的名字**：0.3.18 用纯 npm 名（`magpie-trustoken-auth`）虽然能让 update 跑通，但卡片标题又变回 npm 名。实测 bun 能解析**中文但无空格**的依赖名（`爱派AiPy`），**空格才是致命字符**（`unrecognised dependency format`）。
