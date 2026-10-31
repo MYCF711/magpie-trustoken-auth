@@ -1,4 +1,4 @@
-// Trustoken（AiPy）· magpie 供应商插件
+// 爱派AiPy Trustoken · magpie 供应商插件
 //
 // 一个站点、一个供应商、九个钩子。index 只做装配，实现全在 src/。
 //
