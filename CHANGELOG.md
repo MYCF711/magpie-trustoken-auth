@@ -1,3 +1,10 @@
+## 0.3.18 — 2026-10-31
+
+- **修复：带空格的显示名把 bun 依赖键弄坏，`magpie plugin update` 直接报 `unrecognised dependency format: 爱派AiPy Trustoken`**。
+  根因：git 源安装时 bun 用 `package.json.name` 当依赖键（`~/.config/magpie/plugins/package.json` + `bun.lock`），而 0.3.16/0.3.17 把 `name` 改成了带空格的显示名。
+  修复：**`package.json.name` 回到 npm 合法名 `magpie-trustoken-auth`（无空格）**，显示名只由 `magpie.name` 提供（magpie 的插件行读它，#3608）；`PROVIDER_NAME` 仍是 `爱派 AiPy`。删掉 0.3.16 引入的 `publish-npm.mjs`（不再需要换名发布）。
+- 本机数据修复：`~/.config/magpie/plugins/package.json` 与 `bun.lock` 的依赖键改回 `magpie-trustoken-auth`，`node_modules/爱派AiPy Trustoken` 目录改名，`bun install --offline` 校验通过。
+
 ## 0.3.17 — 2026-10-31
 
 - **显示名更正为 `爱派 AiPy`**（主人 2026-10-31 定稿：中文「爱派」与英文「AiPy」之间要有空格）。0.3.16 的 `爱派AiPy Trustoken` 作废。
