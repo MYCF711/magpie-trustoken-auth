@@ -1,3 +1,10 @@
+## 0.3.19 — 2026-10-31
+
+- **依赖键必须是「无空格」的名字**：0.3.18 用纯 npm 名（`magpie-trustoken-auth`）虽然能让 update 跑通，但卡片标题又变回 npm 名。实测 bun 能解析**中文但无空格**的依赖名（`爱派AiPy`），**空格才是致命字符**（`unrecognised dependency format`）。
+  - `package.json.name` / `magpie.name` → **`爱派AiPy`**（无空格，卡片标题）
+  - `PROVIDER_NAME` 保留 **`爱派 AiPy`**（provider 名不是依赖键，允许空格）
+  - npm 包名仍用 `magpie-trustoken-auth` 发布？—— 不：0.3.18 起已去掉换名脚本，`name` 即发布名；**npm 不能发中文名**，所以 0.3.19 需要 `publish-npm.mjs` 在发布时换回 `magpie-trustoken-auth`（恢复 0.3.16 的做法，但显示名改为无空格 `爱派AiPy`）。
+
 ## 0.3.18 — 2026-10-31
 
 - **修复：带空格的显示名把 bun 依赖键弄坏，`magpie plugin update` 直接报 `unrecognised dependency format: 爱派AiPy Trustoken`**。

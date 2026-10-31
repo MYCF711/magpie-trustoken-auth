@@ -1,6 +1,6 @@
 {
   "package": "magpie-trustoken-auth",
-  "name": "爱派 AiPy",
+  "name": "爱派AiPy",
   "providers": [
     "trustoken"
   ],
