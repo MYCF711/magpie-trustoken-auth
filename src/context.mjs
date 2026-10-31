@@ -1,4 +1,4 @@
-// 共享上下文 —— 爱派AiPy Trustoken 供应商的全部常量
+// 共享上下文 —— 爱派 AiPy 供应商的全部常量
 //
 // 插件里的每个钩子都只读这一份。改厂商信息只改这里。
 
@@ -6,7 +6,7 @@
 export const PROVIDER = "trustoken"
 
 /** 卡片上显示的供应商名 */
-export const PROVIDER_NAME = "爱派AiPy Trustoken"
+export const PROVIDER_NAME = "爱派 AiPy"
 
 /** 模型网关：OpenAI 兼容 */
 export const BASE = "https://api.trustoken.cn/v1"

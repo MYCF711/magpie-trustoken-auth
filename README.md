@@ -1,4 +1,4 @@
-# 爱派AiPy Trustoken for magpie
+# 爱派 AiPy for magpie
 
 **一个 key 用 13 个模型：DeepSeek / Qwen / GLM / 豆包 / Kimi / 混元 / MiMo，外加每天 100 灵石签到和 50+150 灵石每日任务。**
 
@@ -92,7 +92,7 @@ magpie plugin add D:\主工作区\projects\magpie-trustoken-auth
 
 装完在 magpie 里：
 
-1. 供应商列表会多一行 **爱派AiPy Trustoken**；
+1. 供应商列表会多一行 **爱派 AiPy**；
 2. 点登录 → 新号选 **手机号注册 / 登录（弹窗）**，填手机号后在弹出的窗口里完成注册；已登录过 AiPy 客户端的号也可以选 **本机登录（读取 AiPy 会话）** 直接导入；
 3. 登录后模型目录、灵石余额、签到按钮都会出现。
 

@@ -12,7 +12,7 @@
 | 仓库 | `magpie-trustoken-auth` |
 | 包内 name | `Trustoken`（npm：`magpie-trustoken-auth`） |
 | 当前版本 | `0.3.2`（在 `fix/error-classify` 分支，未合并到 main） |
-| 承载供应商 | 爱派AiPy Trustoken（显示名；provider id `trustoken`，npm 包名 `magpie-trustoken-auth`） |
+| 承载供应商 | 爱派 AiPy（显示名；provider id `trustoken`，npm 包名 `magpie-trustoken-auth`） |
 | 上游门户 | `api.trustoken.cn` |
 | 现状负责人 | `trustoken-400` 专员（2026-10-30） |
 
