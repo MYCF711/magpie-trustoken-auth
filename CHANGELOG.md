@@ -1,3 +1,9 @@
+## 0.3.23 — 2026-10-31
+
+- fix(CI)：npm job 的「已发布则跳过」守卫加**竞态处理**。0.3.22 的 release 跑红了：`release.mjs` 先发完，npm 登记有延迟，workflow 里 `npm view` 仍 404 → 去 publish 撞上 `E409 Cannot publish over previously staged version "0.3.22"`。
+  - 发布前 `npm view` 轮询 12×5s 等登记生效；
+  - publish 失败后再复查一次 `npm view`，若版本已出现（并发/延迟竞态）→ 打印 `race: … skipping` 并 `exit 0`，workflow 保持绿；真失败才非 0。
+
 ## 0.3.22 — 2026-10-31
 
 - fix(CI)：release workflow 的 **npm job 也按 tag 检出**（`ref: ${{ inputs.tag || github.ref }}`）。此前 `workflow_dispatch` 重跑旧 tag 时，npm job 检出的是默认分支，导致「跳过已发布版本」的守卫看错版本（实测把 main 的 0.3.21 当成新版本发了出去）。
