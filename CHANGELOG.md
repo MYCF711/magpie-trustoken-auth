@@ -1,3 +1,11 @@
+## 0.3.16 — 2026-10-31
+
+- **显示名改成「中文 + 官方英文」**：`package.json.name` 与 `magpie.name`、provider `name` 统一为 **`爱派AiPy Trustoken`**。
+  - 官方依据：AiPy 官网 `https://www.aipyaipy.com/` 的 `<title>爱派AiPy - 超级AI办工智能体工厂，AiPy Pro智能桌面助手` → 中文名「爱派AiPy」、英文照抄 `AiPy`；Trustoken 官网 `https://www.trustoken.cn/` 只有 `Trustoken CN` 与「Trustoken - AI大模型Token管理和分发平台」，**没有官方中文名**，英文照抄 `Trustoken`。
+  - 不再直接显示 npm 包名（之前卡片标题是 `magpie-token-auth` 那种）。
+- npm 包名保持不变（`magpie-trustoken-auth`，已装用户照旧收更新）：新增根目录 `publish-npm.mjs`（`PUBLISH_AS = "magpie-trustoken-auth"`）与 `npm run publish:npm`，发布时临时换名、发布后还原；`scripts/publish-npm.mjs` 是给 `release.yml` 的入口。
+- 改了 `src/context.mjs` 的 `PROVIDER_NAME`、`registry-entry.json` 的 `name`、`README` / `MAINTENANCE` / `project.json` 的显示名。
+
 ## 0.3.15 — 2026-10-31
 
 - chore(release): 0.3.14 卡在 npm staged 状态（`npm publish` 报 `Cannot publish over previously staged version "0.3.14"`，`npm stage list` 查不到可批准条目），**同代码重发 0.3.15** —— 与 0.3.3 → 0.3.4 的处理方式一致。功能内容与 0.3.14 相同（`locked` 纳入每日任务 gaps）。
