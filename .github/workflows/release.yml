@@ -136,14 +136,29 @@ jobs:
           fi
           pkg=$(node -p "require('./package.json').name")
           ver=$(node -p "require('./package.json').version")
-          # 版本已经在 npm 上（release.mjs 本地发布优先 / 重跑旧 tag）→ 跳过，保持绿
-          if npm view "$pkg@$ver" version >/dev/null 2>&1; then
-            echo "already published $pkg@$ver, skipping"
-            echo "## npm: \`$pkg@$ver\` already published — skipped" >> "$GITHUB_STEP_SUMMARY"
-            exit 0
-          fi
+          # 版本已经在 npm 上（release.mjs 本地发布优先 / 重跑旧 tag）→ 跳过，保持绿。
+          # npm 登记有 1~2 分钟延迟：release.mjs 刚发完时这里可能还看不到，轮询等它出现。
+          for i in $(seq 1 12); do
+            if npm view "$pkg@$ver" version >/dev/null 2>&1; then
+              echo "already published $pkg@$ver, skipping"
+              echo "## npm: \`$pkg@$ver\` already published — skipped" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            sleep 5
+          done
+          rc=0
           if [ -f scripts/publish-npm.mjs ]; then
-            node scripts/publish-npm.mjs
+            node scripts/publish-npm.mjs || rc=$?
           else
-            npm publish --access public
+            npm publish --access public || rc=$?
+          fi
+          if [ "$rc" -ne 0 ]; then
+            # 并发/延迟竞态：别人刚发完、或 npm 报 staged 版本已存在 —— 复查一次，有就跳过
+            sleep 10
+            if npm view "$pkg@$ver" version >/dev/null 2>&1; then
+              echo "race: $pkg@$ver appeared on npm while publishing, skipping"
+              echo "## npm: \`$pkg@$ver\` already published (race) — skipped" >> "$GITHUB_STEP_SUMMARY"
+              exit 0
+            fi
+            exit "$rc"
           fi
