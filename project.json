@@ -6,7 +6,7 @@
   "path": "D:\主工作区\projects\magpie-trustoken-auth",
   "createdAt": "2026-10-29",
   "lastActiveAt": "2026-10-29",
-  "summary": "爱派AiPy magpie 供应商插件：手机号/Token 登录、13 个模型、灵石余额、签到、每日任务、最低消费模型倍率表。",
+  "summary": "爱派 AiPy magpie 供应商插件：手机号/Token 登录、13 个模型、灵石余额、签到、每日任务、最低消费模型倍率表。",
   "entry": "README.md",
   "hindsightBank": "coding-agent::magpie-trustoken-auth",
   "notes": ""

@@ -1,6 +1,6 @@
 {
-  "name": "爱派AiPy",
-  "version": "0.3.19",
+  "name": "magpie-trustoken-auth",
+  "version": "0.3.20",
   "description": "Trustoken / AiPy for magpie — phone-code sign-in, the account's live model list, 灵石 balance, auto check-in and daily-task rewards. DeepSeek / Qwen / GLM / Doubao / Kimi / Hunyuan.",
   "type": "module",
   "main": "./index.mjs",
@@ -47,7 +47,7 @@
     "node": "^22.19.0 || >=24.0.0"
   },
   "magpie": {
-    "name": "爱派AiPy",
+    "name": "爱派 AiPy",
     "icon": "data:image/svg+xml;base64,PHN2ZyB4bWxucz0iaHR0cDovL3d3dy53My5vcmcvMjAwMC9zdmciIHZpZXdCb3g9IjAgMCAxMjggMTI4Ij48cmVjdCB3aWR0aD0iMTI4IiBoZWlnaHQ9IjEyOCIgcng9IjI4IiBmaWxsPSIjMWYyOTM3Ii8+PHBhdGggZD0iTTMyIDQ4cTMyLTMwIDY0IDB2MzJxLTMyIDMwLTY0IDB6IiBmaWxsPSIjNjBhNWZhIi8+PGNpcmNsZSBjeD0iNjQiIGN5PSI2NCIgcj0iMTQiIGZpbGw9IiMxZjI5MzciLz48L3N2Zz4=",
     "maxConcurrency": 4,
     "autoCheckin": true
@@ -57,7 +57,6 @@
     "test:errors": "node tests/error-classify.mjs",
     "score": "node scripts/score.mjs",
     "release": "node scripts/release.mjs",
-    "publish:npm": "node publish-npm.mjs",
     "maintenance": "node scripts/check-maintenance.mjs"
   }
 }
