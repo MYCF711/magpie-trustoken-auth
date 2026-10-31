@@ -1,3 +1,8 @@
+## 0.3.22 — 2026-10-31
+
+- fix(CI)：release workflow 的 **npm job 也按 tag 检出**（`ref: ${{ inputs.tag || github.ref }}`）。此前 `workflow_dispatch` 重跑旧 tag 时，npm job 检出的是默认分支，导致「跳过已发布版本」的守卫看错版本（实测把 main 的 0.3.21 当成新版本发了出去）。
+- 0.3.21 已带「npm 版本已存在则跳过」守卫：`release.mjs` 实测打印「npm … 跳过：… 已经发布过」并继续。
+
 ## 0.3.21 — 2026-10-31
 
 - **release workflow 的 npm job 加「已发布则跳过」守卫**：先 `npm view <pkg>@<version> version`，存在就 `already published …, skipping` + `exit 0`（workflow 保持绿）；不存在才 `npm publish`。没配 `NPM_TOKEN` 时用 `::warning::` + Step Summary 显著提示（不再静默绿）。
