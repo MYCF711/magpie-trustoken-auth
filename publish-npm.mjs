@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 // 发布到 npm 时把 package.json 的 name 临时换成 npm 包名。
 //
-// 为什么需要它：git 源看到的 `name` 是显示名（`爱派AiPy Trustoken`），
+// 为什么需要它：git 源看到的 `name` 是显示名（`爱派 AiPy`），
 // 而 npm 只接受小写、无空格的包名。直接 `npm publish` 会被拒；一律用
 // `npm run publish:npm`（release.mjs 与 release.yml 都会优先用它）。
 //

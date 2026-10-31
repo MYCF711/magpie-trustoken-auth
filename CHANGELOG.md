@@ -1,3 +1,9 @@
+## 0.3.17 — 2026-10-31
+
+- **显示名更正为 `爱派 AiPy`**（主人 2026-10-31 定稿：中文「爱派」与英文「AiPy」之间要有空格）。0.3.16 的 `爱派AiPy Trustoken` 作废。
+  - `package.json.name` / `magpie.name` / `src/context.mjs PROVIDER_NAME` / `registry-entry.json` / README / MAINTENANCE / project.json 同步。
+  - npm 包名仍是 `magpie-trustoken-auth`（`publish-npm.mjs` 不变）。
+
 ## 0.3.16 — 2026-10-31
 
 - **显示名改成「中文 + 官方英文」**：`package.json.name` 与 `magpie.name`、provider `name` 统一为 **`爱派AiPy Trustoken`**。
