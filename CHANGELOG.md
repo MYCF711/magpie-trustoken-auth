@@ -1,3 +1,8 @@
+## 0.3.21 — 2026-10-31
+
+- **release workflow 的 npm job 加「已发布则跳过」守卫**：先 `npm view <pkg>@<version> version`，存在就 `already published …, skipping` + `exit 0`（workflow 保持绿）；不存在才 `npm publish`。没配 `NPM_TOKEN` 时用 `::warning::` + Step Summary 显著提示（不再静默绿）。
+- `scripts/release.mjs` 同步加守卫：本地手工发布时版本已存在 → 打印「跳过：已发布过」并继续第 7 步验证，不再红字失败。
+
 ## 0.3.20 — 2026-10-31
 
 - **依赖键与显示名分家**（主人 + Lead 2026-10-31 定稿）：

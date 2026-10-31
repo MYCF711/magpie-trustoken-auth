@@ -125,8 +125,18 @@ jobs:
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: |
+          set -euo pipefail
           if [ -z "$NODE_AUTH_TOKEN" ]; then
-            echo "没配 NPM_TOKEN —— 跳过 npm 发布（想发就在 Settings → Secrets 里加）"
+            echo "::warning title=npm publish skipped::没配 NPM_TOKEN —— 跳过 npm 发布（想发就在 Settings → Secrets 里加）"
+            echo "## ⚠ npm 未发布：没配 NPM_TOKEN" >> "$GITHUB_STEP_SUMMARY"
+            exit 0
+          fi
+          pkg=$(node -p "require('./package.json').name")
+          ver=$(node -p "require('./package.json').version")
+          # 版本已经在 npm 上（release.mjs 本地发布优先 / 重跑旧 tag）→ 跳过，保持绿
+          if npm view "$pkg@$ver" version >/dev/null 2>&1; then
+            echo "already published $pkg@$ver, skipping"
+            echo "## npm: \`$pkg@$ver\` already published — skipped" >> "$GITHUB_STEP_SUMMARY"
             exit 0
           fi
           if [ -f scripts/publish-npm.mjs ]; then

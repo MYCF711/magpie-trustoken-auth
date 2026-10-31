@@ -375,14 +375,27 @@ if (token) {
 
 let published = null
 if (ALSO_NPM) {
-  const script = pkg.scripts?.["publish:npm"] ? "npm run publish:npm" : "npm publish"
-  console.log(C.dim(`\n  ${script}（npm 登记有 1~2 分钟延迟，别在这窗口里重试）\n`))
+  // 版本已经在 npm 上（重跑发布 / 另一个人先发了）→ 跳过，不红；workflow 的 npm job 同样会跳过
+  let already = false
   try {
-    execSync(script, { cwd: ROOT, stdio: "inherit" })
-    published = true
-  } catch {
-    published = false
-    console.log(C.red("  npm 发布失败"))
+    execSync(`npm view ${pkg.name}@${version} version`, { cwd: ROOT, stdio: "ignore" })
+    already = true
+  } catch {}
+  if (already) {
+    published = "skipped"
+    console.log(C.yellow(`  npm … 跳过：${pkg.name}@${version} 已经发布过（不重复发）`))
+  } else {
+    const script = pkg.scripts?.["publish:npm"] ? "npm run publish:npm" : "npm publish"
+    console.log(C.dim(`
+  ${script}（npm 登记有 1~2 分钟延迟，别在这窗口里重试）
+`))
+    try {
+      execSync(script, { cwd: ROOT, stdio: "inherit" })
+      published = true
+    } catch {
+      published = false
+      console.log(C.red("  npm 发布失败"))
+    }
   }
 }
 
