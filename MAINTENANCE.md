@@ -72,7 +72,7 @@ curl -s http://127.0.0.1:3425/v1/magpie/trace
 ```bash
 node --test                                  # 26 pass
 node tests/error-classify.mjs                # 25 通过
-node "D:/主工作区/projects/magpie-plugin-scaffold/scripts/check.mjs" .   # 29 通过 / 0 失败
+node "<WORKSPACE>/projects/magpie-plugin-scaffold/scripts/check.mjs" .   # 29 通过 / 0 失败
 npm pack --dry-run
 ```
 
