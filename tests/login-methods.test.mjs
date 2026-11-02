@@ -91,7 +91,7 @@ test("4) 本机登录：没有本机 AiPy 登录态 / 号已在 magpie 里 → �
     isKnown: () => true,
   })
   await assert.rejects(() => known[0].authorize(), /已经在 magpie 里/, "同一个号再导一次要提示切换，不能让人以为新号加上了")
-  await assert.rejects(() => known[0].authorize(), /189\*\*\*\*8051/, "报错里要说清当前客户端是哪个号")
+  await assert.rejects(() => known[0].authorize(), /138\*\*\*\*8000/, "报错里要说清当前客户端是哪个号")
 })
 
 test("5) label 去动态化：所有 label 都是稳定文案，不含动态邀请码", () => {
