@@ -1,3 +1,12 @@
+## 0.4.0 — 2026-11-04
+
+- **feat(checkin)：每日任务脱离 AiPy 客户端，纯 API 直接完成并领奖。** 抓包 AiPy Pro 2.1.1 真实任务请求 + 十余组对照实验定位计数口径：服务端只认**完整任务形态**的 `/chat/completions` 请求 —— OpenAI/Python SDK 头组 + `aipy-task-id`/`aipy-task-depth` + **`x-aipy-task-id`（不带版本号）+ `x-aipy-task-type`** + 完整任务 prompt（system 约 3.5 万字符）+ `stream` + `stream_options.include_usage`；简化头、简化 body、只带 `Aipy-Task-ID` 的旧 filler 均不计数。新增 `src/aipy-remote.mjs`（完整形态重放）与 `src/aipy-task-template.mjs`（抓包提取、已脱敏）。
+  - 计数节奏：10 秒连发会漏计，35–40 秒间隔稳定每次 +1（`TASK_INTERVAL_MS = 35s`）。
+  - 实测：189****8051 从 locked 0/5 补到 5/5，`daily_ai_1`、`daily_ai_5` 奖励均成功领取（0.5 + 1.5 灵石）。
+  - 本机 `ensureAipyTasks` 与 `chatOnce` filler **保留**为回退（无 apiKey 或纯 API 全失败时），回退前新增 `readAipyProfile()` 账号比对：AiPy 客户端登录的不是本号就不建（否则任务全记到客户端那个号上 —— 今天 4 个号各空建 5 个的事故根因）。
+  - 新增当日 stalled 冷却（`plugin-store-aipy-daily-trustoken__<uid>.json`）：补了任务但服务端一格没动，当天不再自动补，不再每次签到空发 5 个。
+- 测试：`tests/remote-tasks.test.mjs` 6 条（请求形态锁）+ `checkin-tasks` 增至 9 条；全套 77 条通过。
+
 ## 0.3.23 — 2026-10-31
 
 - fix(CI)：npm job 的「已发布则跳过」守卫加**竞态处理**。0.3.22 的 release 跑红了：`release.mjs` 先发完，npm 登记有延迟，workflow 里 `npm view` 仍 404 → 去 publish 撞上 `E409 Cannot publish over previously staged version "0.3.22"`。
