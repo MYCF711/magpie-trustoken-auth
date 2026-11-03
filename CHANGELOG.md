@@ -1,3 +1,10 @@
+## 0.4.1 — 2026-11-04
+
+- **fix(checkin)：补完任务要等结算，等到可领取就领，不再 30 秒判死。** 任务完成是异步结算（实测 12–20 秒常见，慢的更久），旧代码等 30 秒就判「没进展」并把当天封死 —— 晚到账的奖励没人领。新增 `settleDailyTasks()`：按结算节奏轮询（12 秒一次，最多 2 分钟），一看到 `claimable` 立刻领、逐项领，本轮到点没等满也不丢 —— 当天记录「已补过」，下一次签到继续等并连同 ② 一起领。
+  - `stalled` 语义修正：只表示「今天不再重复发任务」，**不再跳过领奖**；每次签到仍会等结算并领取。
+  - 顺便把 API UA 统一成 AiPy 客户端 UA（实测签到 / 任务状态接口对 UA 不敏感，三种 UA 返回一致；统一只为风控收紧时有正确身份）。
+- 测试：`checkin-tasks` 增至 12 条（新增结算慢/超时/不重复领 3 条），全套 80 条通过。
+
 ## 0.4.0 — 2026-11-04
 
 - **feat(checkin)：每日任务脱离 AiPy 客户端，纯 API 直接完成并领奖。** 抓包 AiPy Pro 2.1.1 真实任务请求 + 十余组对照实验定位计数口径：服务端只认**完整任务形态**的 `/chat/completions` 请求 —— OpenAI/Python SDK 头组 + `aipy-task-id`/`aipy-task-depth` + **`x-aipy-task-id`（不带版本号）+ `x-aipy-task-type`** + 完整任务 prompt（system 约 3.5 万字符）+ `stream` + `stream_options.include_usage`；简化头、简化 body、只带 `Aipy-Task-ID` 的旧 filler 均不计数。新增 `src/aipy-remote.mjs`（完整形态重放）与 `src/aipy-task-template.mjs`（抓包提取、已脱敏）。

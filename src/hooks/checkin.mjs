@@ -64,6 +64,46 @@ export function taskGaps(tasks) {
   )
 }
 
+/**
+ * 等每日任务结算并逐项领奖（0.4.1）。
+ *
+ * 任务完成是**异步结算**的：重放请求 12–20 秒常见，本机客户端任务更慢。
+ * 旧代码只等 30 秒就判「没进展」并把当天封死 —— 奖励晚到账就永远没人领。
+ * 这里按结算节奏轮询，一看到 `claimable` 立刻领，最多等 `maxWaitMs`；
+ * 没等到也不算失败：任务已经发出去了，下一次签到会接着等、接着领。
+ *
+ * 依赖全部注入，便于离线测试（status / claim / sleepFn）。
+ * 返回 { done, tasks, claimed: [{ title, reward }] }。
+ */
+export async function settleDailyTasks({
+  status,
+  claim,
+  maxWaitMs = 120_000,
+  intervalMs = 12_000,
+  sleepFn = (ms) => new Promise((r) => setTimeout(r, ms)),
+}) {
+  const started = Date.now()
+  const claimed = []
+  let tasks = await status()
+
+  for (;;) {
+    for (const t of tasks) {
+      if (t.status !== "claimable") continue
+      const r = await claim(t.task_type)
+      if (r?.success) {
+        claimed.push({ title: t.title, reward: Number(r?.data?.reward || 0) })
+        // 本地同步，避免同一轮里重复 claim
+        t.status = "claimed"
+        t.progress = t.target
+      }
+    }
+    if (taskGaps(tasks).length === 0) return { done: true, tasks, claimed }
+    if (Date.now() - started >= maxWaitMs) return { done: false, tasks, claimed }
+    await sleepFn(intervalMs)
+    tasks = await status()
+  }
+}
+
 export function makeCheckin(c) {
   return async (getAuth) => {
     const auth = await getAuth()
@@ -129,18 +169,18 @@ export function makeCheckin(c) {
       // 100% 重放可完成 daily_ai_1 / daily_ai_5 并领奖（实测 189 号 0/5 → 5/5 claimed）。
       // ⇒ 不再依赖 AiPy 客户端；本机 createTask 仅作无 apiKey / 纯 API 全失败时的回退。
       tasks = await dailyTaskStatus(token, uid)
-      const gaps = taskGaps(tasks)
-      if (gaps.length) {
-        const need = Math.max(...gaps.map((t) => Number(t.target) - Number(t.progress)))
+      if (taskGaps(tasks).length) {
+        const need = Math.max(...taskGaps(tasks).map((t) => Number(t.target) - Number(t.progress)))
         const stateFile = fileOf("aipy-daily", { siteId: "trustoken", account: uid })
         const today = beijingDay()
         const state = readJson(stateFile)
+        const stalledToday = state?.day === today && state?.stalled === true
+        let attempted = 0
 
-        if (state?.day === today && state?.stalled) {
-          parts.push("今日已补过任务但服务端进度未推进，暂停自动重试（可在 AiPy 客户端手动完成）")
+        if (stalledToday) {
+          // 今天补过、服务端一直没认：不再重复发任务（防空转），但本轮仍然等它晚到账并领奖
+          parts.push("今日已补过任务、服务端尚未结算：本轮不再重复补，继续等待并领取")
         } else {
-          let attempted = 0
-
           // 主路径：纯 API 补任务（不读 AiPy 本机登录态，多账号各自独立）
           if (apiKey) {
             const { runRemoteTask, TASK_INTERVAL_MS } = await import("../aipy-remote.mjs")
@@ -201,36 +241,30 @@ export function makeCheckin(c) {
               }
             }
           }
+        }
 
-          // 等 trustoken 结算进度（最多 30 秒）
-          if (attempted > 0) {
-            for (let i = 0; i < 10; i++) {
-              await sleep(3000)
-              const now = await dailyTaskStatus(token, uid)
-              if (taskGaps(now).length === 0) break
-            }
-          }
+        // ── 等结算 + 逐项领奖（0.4.1）────────────────────────────────
+        // 任务完成是异步结算的：实测 12–20 秒常见，慢的会更久。这里按结算节奏轮询，
+        // 一看到 claimable 立刻领，最多等 2 分钟；没等到也不丢——当天记录已补过，
+        // 下一次签到会接着等并与 ② 一起把晚到账的奖励领掉。
+        const settle = await settleDailyTasks({
+          status: () => dailyTaskStatus(token, uid),
+          claim: (task_type) => claimDailyTask(token, uid, task_type),
+        })
+        for (const c of settle.claimed) {
+          const s = stones(c.reward)
+          credit += s
+          claimed = true
+          parts.push(`${c.title} 领取 +${s} 灵石`)
+        }
+        parts.push(`每日任务进度 ${settle.tasks.map((t) => `${t.progress}/${t.target}`).join("、")}`)
 
-          const after = await dailyTaskStatus(token, uid)
-          parts.push(`每日任务进度 ${after.map((t) => `${t.progress}/${t.target}`).join("、")}`)
-
-          // 结算：全完成 → 清冷却；补了却一格没动 → 当天封自动补
-          if (attempted > 0) {
-            if (taskGaps(after).length === 0) removeJson(stateFile)
-            else if (shouldStall(tasks, after)) writeJson(stateFile, { day: today, stalled: true })
-          }
-
-          // 补完若变成可领取，再领一次
-          for (const t of after) {
-            if (t.status !== "claimable") continue
-            const r = await claimDailyTask(token, uid, t.task_type)
-            if (r?.success) {
-              const s = stones(r?.data?.reward)
-              credit += s
-              claimed = true
-              parts.push(`${t.title} 领取 +${s} 灵石`)
-            }
-          }
+        if (settle.done) {
+          removeJson(stateFile)
+        } else if (attempted > 0) {
+          // 有推进（只是没等满）→ 下次签到继续补剩余；一格没动 → 当天不再重复补
+          if (shouldStall(tasks, settle.tasks)) writeJson(stateFile, { day: today, stalled: true, at: Date.now() })
+          else removeJson(stateFile)
         }
       }
 
