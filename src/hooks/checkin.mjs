@@ -19,12 +19,28 @@ import { checkinStatus, doCheckin, dailyTaskStatus, claimDailyTask, chatOnce } f
 import { QUOTA_PER_STONE, CHECKIN_WINDOW } from "../context.mjs"
 import { CHEAPEST_MODEL } from "../rates.mjs"
 import { rollInvite } from "../invite.mjs"
+import { fileOf, readJson, writeJson, removeJson } from "../store.mjs"
 
 const stones = (quota) => Number(quota || 0) / QUOTA_PER_STONE
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms))
 
 function beijingHour(date = new Date()) {
   return new Date(date.getTime() + 8 * 3600_000).getUTCHours()
+}
+
+/** 北京日期 YYYY-MM-DD —— 每日任务按北京时间跨天重置，冷却记录也按它分天 */
+export function beijingDay(date = new Date()) {
+  return new Date(date.getTime() + 8 * 3600_000).toISOString().slice(0, 10)
+}
+
+/** 进度总和：比较「补任务前 / 后」有没有真的推进 */
+export function progressSum(tasks) {
+  return (tasks ?? []).reduce((s, t) => s + Number(t.progress || 0), 0)
+}
+
+/** 补了任务却一格进度都没动 → 当天别再自动补（防空转，见 0.4.0 CHANGELOG） */
+export function shouldStall(before, after) {
+  return progressSum(after) <= progressSum(before)
 }
 
 function taskId() {
@@ -105,60 +121,115 @@ export function makeCheckin(c) {
         }
       }
 
-      // ── ③ 用最低消费模型补每日任务 ───────────────────────────────
+      // ── ③ 补每日任务：纯 API 完整形态优先，本机 AiPy 回退 ─────────
       //
-      // 2026-10-29 实测：trustoken 的「AI 任务」= AiPy Pro 的一个任务（会话）。
-      // 只有 AiPy Pro 客户端自己创建的任务才算；普通 chat 请求、aipyapp Python API 都不算。
-      // AiPy 本地 API：POST /api/aipy/createTask，body 是参数数组，必须带 force:true
-      // （不带 force 会复用最近那个空任务，不新建）。
+      // 0.4.0（2026-11-04 抓包 + 对照实验）：trustoken 按**完整任务形态**的
+      // /chat/completions 请求计数 —— OpenAI/Python SDK 头组 + aipy-task-id/depth
+      // + x-aipy-task-id/x-aipy-task-type + 完整任务 prompt + stream(include_usage)。
+      // 100% 重放可完成 daily_ai_1 / daily_ai_5 并领奖（实测 189 号 0/5 → 5/5 claimed）。
+      // ⇒ 不再依赖 AiPy 客户端；本机 createTask 仅作无 apiKey / 纯 API 全失败时的回退。
       tasks = await dailyTaskStatus(token, uid)
       const gaps = taskGaps(tasks)
       if (gaps.length) {
         const need = Math.max(...gaps.map((t) => Number(t.target) - Number(t.progress)))
-        const { ensureAipyTasks } = await import("../aipy-local.mjs")
-        const local = await ensureAipyTasks({ n: need, model: CHEAPEST_MODEL })
+        const stateFile = fileOf("aipy-daily", { siteId: "trustoken", account: uid })
+        const today = beijingDay()
+        const state = readJson(stateFile)
 
-        if (local.created > 0) {
-          parts.push(`用最低价 ${CHEAPEST_MODEL} 在 AiPy 建了 ${local.created} 个任务（会话）`)
-          // 等 trustoken 结算进度（实测 20 秒内；最多等 30 秒）
-          for (let i = 0; i < 10; i++) {
-            await sleep(3000)
-            const now = await dailyTaskStatus(token, uid)
-            if (taskGaps(now).length === 0) break
-          }
+        if (state?.day === today && state?.stalled) {
+          parts.push("今日已补过任务但服务端进度未推进，暂停自动重试（可在 AiPy 客户端手动完成）")
         } else {
-          parts.push(`AiPy 本机任务不可用（${local.reason}）`)
-          // 降级：纯 API 补发（实测不推进进度，只作尽力而为）
+          let attempted = 0
+
+          // 主路径：纯 API 补任务（不读 AiPy 本机登录态，多账号各自独立）
           if (apiKey) {
+            const { runRemoteTask, TASK_INTERVAL_MS } = await import("../aipy-remote.mjs")
             for (let i = 0; i < need; i++) {
               try {
-                await chatOnce(apiKey, {
-                  model: CHEAPEST_MODEL,
-                  content: `只回复 OK（${i + 1}）`,
-                  max_tokens: 4,
-                  headers: {
-                    "Aipy-Task-ID": `${taskId()}/2.1.1`,
-                    "Aipy-Task-Depth": "0",
-                    "Aipy-Task-Type": "task",
-                  },
-                })
-              } catch {}
+                const r = await runRemoteTask({ apiKey, model: CHEAPEST_MODEL })
+                if (!r.ok) {
+                  parts.push(`补任务第 ${i + 1} 次请求失败（HTTP ${r.status}）`)
+                  break
+                }
+                attempted++
+              } catch (e) {
+                parts.push(`补任务第 ${i + 1} 次请求异常：${String(e?.message ?? e).slice(0, 120)}`)
+                break
+              }
+              // 结算节奏：过密会漏计（实测 35–40 秒间隔稳定每次 +1）
+              if (i < need - 1) await sleep(TASK_INTERVAL_MS)
+            }
+            if (attempted > 0) {
+              parts.push(`以完整任务形态补发 ${attempted} 个 AI 任务（${CHEAPEST_MODEL}，纯 API）`)
             }
           }
-        }
 
-        const after = await dailyTaskStatus(token, uid)
-        parts.push(`每日任务进度 ${after.map((t) => `${t.progress}/${t.target}`).join("、")}`)
+          // 回退：本机 AiPy 客户端建任务（需客户端登录的是同一个号，否则建了也记别人头上）
+          if (attempted === 0) {
+            const { ensureAipyTasks, readAipyProfile, sameAipyAccount } = await import("../aipy-local.mjs")
+            const profile = await readAipyProfile()
+            const match = sameAipyAccount(profile, uid)
+            if (match === false) {
+              parts.push(
+                `AiPy 客户端当前登录的是 ${profile?.phone ? `${profile.phone.slice(0, 3)}****${profile.phone.slice(-4)}` : "另一个账号"}，` +
+                  `与本账号不一致，跳过本机建任务（建了也只会记到那个号上）`,
+              )
+            } else {
+              const local = await ensureAipyTasks({ n: need, model: CHEAPEST_MODEL })
+              if (local.created > 0) {
+                attempted = local.created
+                parts.push(`用最低价 ${CHEAPEST_MODEL} 在 AiPy 建了 ${local.created} 个任务（会话）`)
+              } else {
+                parts.push(`AiPy 本机任务不可用（${local.reason}）`)
+                // filler 兜底（主人要求保留；实测不推进进度，只作尽力而为）
+                if (apiKey) {
+                  for (let i = 0; i < need; i++) {
+                    try {
+                      await chatOnce(apiKey, {
+                        model: CHEAPEST_MODEL,
+                        content: `只回复 OK（${i + 1}）`,
+                        max_tokens: 4,
+                        headers: {
+                          "Aipy-Task-ID": `${taskId()}/2.1.1`,
+                          "Aipy-Task-Depth": "0",
+                          "Aipy-Task-Type": "task",
+                        },
+                      })
+                    } catch {}
+                  }
+                }
+              }
+            }
+          }
 
-        // 补完若变成可领取，再领一次
-        for (const t of after) {
-          if (t.status !== "claimable") continue
-          const r = await claimDailyTask(token, uid, t.task_type)
-          if (r?.success) {
-            const s = stones(r?.data?.reward)
-            credit += s
-            claimed = true
-            parts.push(`${t.title} 领取 +${s} 灵石`)
+          // 等 trustoken 结算进度（最多 30 秒）
+          if (attempted > 0) {
+            for (let i = 0; i < 10; i++) {
+              await sleep(3000)
+              const now = await dailyTaskStatus(token, uid)
+              if (taskGaps(now).length === 0) break
+            }
+          }
+
+          const after = await dailyTaskStatus(token, uid)
+          parts.push(`每日任务进度 ${after.map((t) => `${t.progress}/${t.target}`).join("、")}`)
+
+          // 结算：全完成 → 清冷却；补了却一格没动 → 当天封自动补
+          if (attempted > 0) {
+            if (taskGaps(after).length === 0) removeJson(stateFile)
+            else if (shouldStall(tasks, after)) writeJson(stateFile, { day: today, stalled: true })
+          }
+
+          // 补完若变成可领取，再领一次
+          for (const t of after) {
+            if (t.status !== "claimable") continue
+            const r = await claimDailyTask(token, uid, t.task_type)
+            if (r?.success) {
+              const s = stones(r?.data?.reward)
+              credit += s
+              claimed = true
+              parts.push(`${t.title} 领取 +${s} 灵石`)
+            }
           }
         }
       }

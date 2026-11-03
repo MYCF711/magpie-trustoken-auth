@@ -73,6 +73,39 @@ export async function readTrustokenToken() {
   }
 }
 
+/**
+ * 读 meta 表的 trustoken-profile —— AiPy 客户端**当前登录的是哪个账号**。
+ * 返回 { id, phone }；读不到返回 null。
+ *
+ * 为什么必须有（2026-11-04 事故）：本机 createTask 建的任务只记在 AiPy 当前登录
+ * 账号名下。签到钩子对每个 trustoken 账号都会跑，若不给调用方这个判据，
+ * 其它账号的「补 5 个任务」会全部建进这一个号的客户端 —— 别的号进度永远 0/5，
+ * 每次签到再建 5 个，纯白烧。
+ */
+export async function readAipyProfile() {
+  const file = aipyDbPath()
+  if (!file || !existsSync(file)) return null
+  const db = await openDb(file)
+  if (!db) return null
+  try {
+    const row = queryOne(db, "select value from meta where field = 'trustoken-profile'")
+    if (!row?.value) return null
+    const parsed = JSON.parse(row.value)
+    if (!parsed?.id) return null
+    return { id: parsed.id, phone: String(parsed.phone_number || parsed.username || "") }
+  } catch {
+    return null
+  } finally {
+    try { db.close?.() } catch {}
+  }
+}
+
+/** AiPy 本机登录账号与签到账号是否同一个。profile 为 null（读不到）时返回 null —— 调用方自行决定放行还是拦截 */
+export function sameAipyAccount(profile, uid) {
+  if (!profile) return null
+  return String(profile.id) === String(uid)
+}
+
 /** 找 AiPyPro.exe 在 127.0.0.1 上监听的 API 端口（Windows） */
 export async function findAipyPort(apiKey) {
   if (!isWin) return null
