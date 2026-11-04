@@ -16,6 +16,7 @@
 import { createServer } from "node:http"
 import { createHash, randomBytes } from "node:crypto"
 import { WEB } from "./context.mjs"
+import { AIPY_UA } from "./ua.mjs"
 
 const CLIENT_ID = "aipy-pro"
 const SCOPE = "all"
@@ -78,7 +79,8 @@ export async function fetchOAuthCode({ challenge, sessionCookie, userAgent, redi
     redirect: "manual",
     headers: {
       cookie: `session=${sessionCookie}`,
-      ...(userAgent ? { "user-agent": userAgent } : {}),
+      // 调用方一般传 aipyUserAgent()；没传也必须带官方 UA，不能落到 fetch 的默认值
+      "user-agent": userAgent || AIPY_UA,
       accept: "text/html,application/xhtml+xml",
     },
     signal: AbortSignal.timeout(30_000),
@@ -221,6 +223,8 @@ export async function exchangeOAuthCode({ code, verifier, redirectUri }) {
     headers: {
       "content-type": "application/x-www-form-urlencoded",
       accept: "application/json",
+      // 官方 AiPy Pro 客户端 UA（唯一常量在 src/ua.mjs）
+      "user-agent": AIPY_UA,
     },
     body,
     signal: AbortSignal.timeout(30_000),

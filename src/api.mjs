@@ -9,6 +9,7 @@
 //   ③ 每个请求都带超时
 
 import { BASE, WEB } from "./context.mjs"
+import { AIPY_UA as UA } from "./ua.mjs"
 
 export class ApiError extends Error {
   constructor(message, { status = 0, code = "", url = "" } = {}) {
@@ -24,7 +25,7 @@ export const TIMEOUT = { short: 10_000, long: 120_000 }
 
 // 与 AiPy Pro 客户端同款 UA（2026-11-04 实测：签到 / 任务状态接口对 UA 不敏感，
 // 三种 UA 返回一致；统一成客户端 UA 是为了将来风控收紧时仍有正确身份，别退回裸露的库名）
-const UA = "Mozilla/5.0 (win32; x64) AppleWebKit/537.36 (KHTML, like Gecko) aipy-pro/2.1.1 Chrome/134.0.6998.179 Electron/34.3.3 Safari/537.36"
+// 值只在 src/ua.mjs 里定义一份，loader / browser-login / oauth 取的是同一个常量。
 
 export function headersFor(auth = {}) {
   const h = {

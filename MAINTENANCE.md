@@ -65,7 +65,7 @@ curl -s http://127.0.0.1:3425/v1/magpie/trace
 - **绝不关闭 magpie**（本会话自己走它的网关 `127.0.0.1:3425`），只允许 Stop-Process 后立刻 Start-Process 同一个 exe
 - `src/api.mjs` 的 `asModelError` / `asSignInExpired` / `isAuthFailure` **仍是死函数（零调用）**，属另一件事，别顺手接
 - `src/chat.mjs` 的 `passThrough` / `withUsage` / `singleShotToSSE` 也是死代码，同样先放着
-- `loader.mjs` 的 `user-agent` 还写着 `magpie-trustoken-auth/0.1.0`（包已是 0.3.x），**待修**
+- ~~`loader.mjs` 的 `user-agent` 还写着 `magpie-trustoken-auth/0.1.0`（包已是 0.3.x），**待修**~~ —— 2026-11-04 已修：UA 收敛到 `src/ua.mjs` 的 `AIPY_UA`（官方 AiPy Pro 客户端 UA），`loader.mjs` / `api.mjs` / `browser-login.mjs` / `oauth.mjs` 全取这一份；`grep -rn "magpie-trustoken-auth/" src` 必须为空
 
 ## 六、交付自检
 

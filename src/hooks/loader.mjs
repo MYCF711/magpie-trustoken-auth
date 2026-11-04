@@ -16,6 +16,7 @@
 
 import { BASE } from "../context.mjs"
 import { rewriteRefusal } from "../status.mjs"
+import { AIPY_UA } from "../ua.mjs"
 
 export function makeLoader(c) {
   return async (getAuth) => {
@@ -27,7 +28,10 @@ export function makeLoader(c) {
       baseURL: BASE,
       apiKey,
       headers: {
-        "user-agent": "magpie-trustoken-auth/0.1.0",
+        // 官方 AiPy Pro 客户端 UA（唯一常量在 src/ua.mjs）。这一条以前写着
+        // `magpie-trustoken-auth/0.1.0`，会被 magpie 原样发给上游 —— 上游网关按
+        // `<product>/<version>` 认第三方客户端，命中就 403 TM.00000001。
+        "user-agent": AIPY_UA,
       },
       async fetch(input, init) {
         const res = await fetch(input, init)

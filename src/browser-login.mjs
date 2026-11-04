@@ -38,11 +38,9 @@ function envBrowserOverride(env) {
   return []
 }
 
-/** AiPy 客户端同款 UA（文档第 1 节：服务端只认 `aipy-pro/*`） */
-export const AIPY_APP_VERSION = "2.1.1"
-export function aipyUserAgent() {
-  return `Mozilla/5.0 (${process.platform}; ${process.arch}) AppleWebKit/537.36 (KHTML, like Gecko) aipy-pro/${AIPY_APP_VERSION} Chrome/134.0.6998.179 Electron/34.3.3 Safari/537.36`
-}
+// AiPy 客户端同款 UA 只有一份，定义在 src/ua.mjs（全插件出站请求共用）。
+// 这里保留这两个导出名，是因为 src/hooks/methods.mjs 等调用方一直按它取。
+export { AIPY_APP_VERSION, aipyUserAgent } from "./ua.mjs"
 
 function cacheDir() {
   return join(homedir(), ".cache", "magpie")
