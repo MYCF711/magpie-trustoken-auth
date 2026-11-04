@@ -119,6 +119,7 @@ PR 的 `rules` 检查全绿并合并后，才从与 `origin/main` 完全一致�
 | # | 症状 | 判据 | 出处 |
 |---|---|---|---|
 | 34 | 每日任务 `daily_ai_1` / `daily_ai_5` 一直不动，`checkin` 也从没调用过 `ensureAipyTasks`；查 `GET /api/user/daily_tasks/status` 全是 `locked` | **`locked` = 未开始（正常初始态），不是锁死**：2026-10-31 实测建 1 个 AiPy 任务后 `locked 0/1 → claimable 1/1`、`locked 0/5 → in_progress 1/5`；前端 bundle 的 `Jb` 组件也把 `locked` 落到「去完成」分支。`gaps` 必须同时认 `in_progress` 和 `locked`（旧代码只认 `in_progress` → gaps 永远空）。判据：`tests/checkin-tasks.test.mjs` 5 条 | [`src/hooks/checkin.mjs`](./src/hooks/checkin.mjs) · [internals 5.1](./docs/internals.md) · `tests/checkin-tasks.test.mjs` |
+| 35 | **上游偶发或固定回 403 `TM.00000001`（文案是「网络繁忙，请稍后重试」），重试和换账号都没用**；或者某个 provider 换到新网络 / 新账号后就不通 | 每个打上游的 `fetch` 都**显式**带 `User-Agent`，值是**该服务官方客户端**的 UA —— 绝不写 `<包名>/<版本号>`，也绝不让宿主的 `magpie/<version>` 透传（插件不设 UA 时它就这么上去）。官方是网页就用完整 Chrome UA；有 App / CLI 客户端就用那个客户端的 UA。判据：`node scripts/check-ua.mjs` 退出 0（模板坑表第 38 条） | README「3. User-Agent 常常是硬校验」· `scripts/check-ua.mjs` |
 
 ---
 
