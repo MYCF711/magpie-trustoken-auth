@@ -1,3 +1,13 @@
+## 0.4.7 — 2026-11-20
+
+**fix(refresh)：续期改看网关令牌的真实可用性，不再把 `expires = 1` 读成「登录失效」**
+
+- 事故：5 个号全部显示「已退出登录 / 需要重新登录」，而令牌一直是好的（`/api/user/self` 200、`/v1/models` 200）。
+- 机制：magpie 的 `staleAccess()`（宿主 host.js）对「没到期却被上游 401 拒掉」的 OAuth 账号会把 `plugin-auth.json` 里的 `expires` 写成 `1`，等下一个 refresh 续上；旧实现读到 1 直接抛 `signIn: "expired"` → 账号被标 lapsed → 每轮刷新重演，永久卡死。
+- 实测确认上游能力：`POST /api/oauth/token` + `grant_type=refresh_token` 回 **401 unsupported_grant_type**（没有 refresh 端点）；`GET /api/token/` 显示模型网关那把 key 是 `expired_time: -1`、`unlimited_quota: true`（**永久令牌**）。
+- 所以 refresh 现在做的是：`GET /v1/models` 探一次网关 → 200 就续 30 天（`{ expires }`，宿主按合并写回）；401/403 才抛 `signIn: "expired"`；网络错 / 5xx 抛普通错误（一次抖动不该把号打死）。
+- 新增 `tests/refresh.test.mjs` 8 条：锁住「expires=1 + 网关 200 → 续期不抛」「401/403 → 失效」「网络错 → 不标失效」「只回 expires 一个字段」。
+
 ## 0.4.6 — 2026-11-05
 
 **插件与供应商两处图标统一为同一张 256×256**
