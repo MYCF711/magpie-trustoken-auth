@@ -250,6 +250,7 @@ export function makeCheckin(c) {
         const settle = await settleDailyTasks({
           status: () => dailyTaskStatus(token, uid),
           claim: (task_type) => claimDailyTask(token, uid, task_type),
+          maxWaitMs: stalledToday ? 0 : 120_000,
         })
         for (const c of settle.claimed) {
           const s = stones(c.reward)
