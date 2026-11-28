@@ -100,17 +100,18 @@ export function makeUsage(c, deps = {}) {
       try {
         const b = await readBilling(apiKey)
         const dead = isAccountLoginDead(loginError)
-        // 卡片上必须一眼看得出「这个号要重新登录」：plan 是账号行里最显眼的那个徽标。
+        // 卡片上必须一眼看得出「这个号不能签到」：plan 是账号行里**唯一**会被渲染的
+        // 卖家字段（实测钱包型窗口的 display 不渲染 —— 界面只拼「剩余 X 灵石」）。
         // 只改文案、不动账号状态 —— 这个号的模型调用（永久 apiKey）还是好的，不能因为
         // 登录令牌死了就把整条通道停掉（那是 mark-relogin 开关才做的选择）。
-        const plan = `${b.stones > 0 ? "灵石制" : "已耗尽"}${dead ? " · 登录已失效" : ""}`
+        const plan = `${b.stones > 0 ? "灵石制" : "已耗尽"}${dead ? " · 无法签到" : ""}`
         return buildUsage({
           plan,
           windows: [
             walletWindow({
               stones: b.stones,
               used: b.used,
-              sourceNote: dead ? " · 网关计费口径（签到需重新登录）" : " · 网关计费口径",
+              sourceNote: dead ? " · 网关计费口径（登录已失效，签到不可用）" : " · 网关计费口径",
             }),
           ],
           // 开关开 = 换成官方的「登录已失效，点此重新登录」按钮。
