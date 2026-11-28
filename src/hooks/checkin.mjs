@@ -15,7 +15,7 @@
 //   ③ 把服务端实际进度写回 message —— 不谎报完成
 
 import { randomBytes } from "node:crypto"
-import { checkinStatus, doCheckin, dailyTaskStatus, claimDailyTask, chatOnce } from "../api.mjs"
+import { checkinStatus, doCheckin, dailyTaskStatus, claimDailyTask, chatOnce, isAccountLoginDead } from "../api.mjs"
 import { QUOTA_PER_STONE, CHECKIN_WINDOW } from "../context.mjs"
 import { CHEAPEST_MODEL } from "../rates.mjs"
 import { rollInvite } from "../invite.mjs"
@@ -279,6 +279,15 @@ export function makeCheckin(c) {
         message: parts.join("；"),
       }
     } catch (e) {
+      // 登录令牌作废是最容易看错的一种失败：原话「无权进行此操作，access token 无效」
+      // 会被读成「没权限 / 网络抖动」，但它是**必须重新登录**，重试一辈子也不会好。
+      // 签到链路一步都走不下去（第一个请求就是账号接口），所以这里直说不猜。
+      if (isAccountLoginDead(e)) {
+        return {
+          outcome: "failed",
+          message: "签到需要有效的账号登录：当前 access token 已失效（模型调用不受影响），请重新登录这个账号后再签到",
+        }
+      }
       return { outcome: "failed", message: String(e?.message ?? e).slice(0, 400) }
     }
   }
