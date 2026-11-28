@@ -21,6 +21,7 @@
 // 既不假装一切正常，也不把整个账号（其实还能跑模型）报成不可用。
 
 import { fetchSelf, fetchBillingBalance, isAccountLoginDead } from "../api.mjs"
+import { markReloginOn } from "../flags.mjs"
 import { QUOTA_PER_STONE } from "../context.mjs"
 import { usage as buildUsage, usageWindow } from "../quota.mjs"
 
@@ -56,6 +57,9 @@ export function makeUsage(c, deps = {}) {
   // 依赖可注入：离线测试不该打真上游
   const readSelf = deps.fetchSelf ?? ((token, uid) => fetchSelf(token, uid))
   const readBilling = deps.fetchBilling ?? ((apiKey) => fetchBillingBalance(apiKey))
+
+  // 开关读不到就当关：默认绝不改账号状态
+  const optionOf = deps.option ?? ((key) => markReloginOn(c.PROVIDER))
 
   return async (getAuth) => {
     const auth = await getAuth()
@@ -95,15 +99,23 @@ export function makeUsage(c, deps = {}) {
     if (apiKey) {
       try {
         const b = await readBilling(apiKey)
+        const dead = isAccountLoginDead(loginError)
+        // 卡片上必须一眼看得出「这个号要重新登录」：plan 是账号行里最显眼的那个徽标。
+        // 只改文案、不动账号状态 —— 这个号的模型调用（永久 apiKey）还是好的，不能因为
+        // 登录令牌死了就把整条通道停掉（那是 mark-relogin 开关才做的选择）。
+        const plan = `${b.stones > 0 ? "灵石制" : "已耗尽"}${dead ? " · 登录已失效" : ""}`
         return buildUsage({
-          plan: b.stones > 0 ? "灵石制" : "已耗尽",
+          plan,
           windows: [
             walletWindow({
               stones: b.stones,
               used: b.used,
-              sourceNote: isAccountLoginDead(loginError) ? " · 网关计费口径（登录令牌已失效，签到需重新登录）" : " · 网关计费口径",
+              sourceNote: dead ? " · 网关计费口径（签到需重新登录）" : " · 网关计费口径",
             }),
           ],
+          // 开关开 = 换成官方的「登录已失效，点此重新登录」按钮。
+          // 代价写在 flags.mjs / index.mjs 的说明里：标记后 magpie 在重新登录前不再用这个号。
+          ...(dead && optionOf("mark-relogin") === true ? { signIn: "expired" } : {}),
         })
       } catch (e) {
         // 计费也读不到：保留「哪一段更值得说」的那个原因 —— 登录令牌死了才是根因
