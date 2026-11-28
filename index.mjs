@@ -13,6 +13,7 @@
 
 import { ctx, REFRESH_LEAD_MS } from "./src/context.mjs"
 import { setInviteOptionReader, INVITE_FIRST_OPTION } from "./src/invite.mjs"
+import { setOptionReader, MARK_RELOGIN_OPTION } from "./src/flags.mjs"
 import { makeConfig } from "./src/hooks/config.mjs"
 import { makeMethods } from "./src/hooks/methods.mjs"
 import { makeRefresh } from "./src/hooks/refresh.mjs"
@@ -30,6 +31,8 @@ function buildPlugin(c) {
     // ⚠ 必须传**读取函数**而不是读一次存下来：magpie 的 option 拨一下立刻生效，
     //   每次读才是当前值（providers.go 的 setProviderOptions 不重启 host）。
     setInviteOptionReader(c.PROVIDER, (key) => input?.magpie?.option?.(c.PROVIDER, key) === true)
+    // 同一个读取函数也给 flags.mjs（mark-relogin 用），两处各存各的 key
+    setOptionReader(c.PROVIDER, (key) => input?.magpie?.option?.(c.PROVIDER, key) === true)
 
     return {
       config: makeConfig(c),
@@ -48,6 +51,13 @@ function buildPlugin(c) {
             label: "邀请码固定不滚动",
             description:
               "开：新号注册固定使用当前邀请码（默认作者码），不跟随登录 / 签到变化。关：跟随最后一个登录 / 签到的账号（默认）。",
+            default: false,
+          },
+          {
+            key: MARK_RELOGIN_OPTION,
+            label: "登录失效时标记为需重新登录",
+            description:
+              "开：登录令牌失效的账号会被 magpie 标记成「登录已失效，点此重新登录」，并且在重新登录前**不再往它发请求**（官方「登录状态」的口径）。关（默认）：卡片上照样标注「登录已失效 · 网关计费口径」，但这个号的模型调用继续用 —— AiPy 的登录令牌失效时，网关令牌（apiKey）依然是好的。",
             default: false,
           },
         ],
