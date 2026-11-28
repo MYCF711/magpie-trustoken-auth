@@ -145,9 +145,9 @@ test("usage: 登录令牌作废 → 改走网关计费，余额照常显示并�
   assert.equal(u.windows.length, 1)
   assert.equal(u.windows[0].balance.toFixed(2), "32002.84")
   assert.match(u.windows[0].display, /网关计费口径/)
-  assert.match(u.windows[0].display, /签到需重新登录/)
+  assert.match(u.windows[0].display, /签到不可用/)
   // 「登录已失效」放在 plan 徽标上（账号行最显眼的那格），display 不再重复一遍
-  assert.match(u.plan, /登录已失效/)
+  assert.match(u.plan, /无法签到/)
   assert.equal(u.error, undefined)
   // 窗口形状仍要过 quota.mjs 的五类拦截（钱包型不许给 used）
   assert.doesNotThrow(() => usage(u))
@@ -209,7 +209,7 @@ test("usage: 既没有账号 token 也没有 apiKey → 直说重新登录，不
 // 失效时 plan 必须带标注。**默认只改文案、不动账号状态** —— 标记会让 magpie 在
 // 重新登录前不再往这个号发请求，而它的模型调用（永久 apiKey）其实一直是好的。
 
-test("usage: 登录令牌失效 → plan 徽标带「登录已失效」，默认不标记账号", async () => {
+test("usage: 登录令牌失效 → plan 徽标带「无法签到」，默认不标记账号", async () => {
   const hook = makeUsage(ctx, {
     fetchSelf: async () => {
       throw deadTokenError()
@@ -217,7 +217,7 @@ test("usage: 登录令牌失效 → plan 徽标带「登录已失效」，默认
     fetchBilling: async () => ({ stones: 100, used: 1 }),
   })
   const u = await hook(async () => oauthAuth({ accountId: "189****8051" }))
-  assert.match(u.plan, /登录已失效/)
+  assert.match(u.plan, /无法签到/)
   assert.equal(u.signIn, undefined, "默认绝不能把账号标成 expired —— 那会让 magpie 停用这个号")
   assert.equal(u.windows.length, 1)
 })
@@ -249,7 +249,7 @@ test("usage: 开关开 → 返回 signIn: expired（换官方的「点此重新�
   assert.deepEqual(seen, ["mark-relogin"])
   assert.equal(u.signIn, "expired")
   assert.equal(u.windows.length, 1, "标记的同时余额仍然给（重新登录前用户还要看余额）")
-  assert.match(u.plan, /登录已失效/)
+  assert.match(u.plan, /无法签到/)
 })
 
 test("flags: 没有 reader / reader 抛错 一律当关（绝不让读开关失败改账号状态）", () => {
